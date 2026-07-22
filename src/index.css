@@ -1,0 +1,51 @@
+/**
+ * Purpose: Global stylesheet — Tailwind layers + base document styles
+ * Responsibilities: Font loading, scrollbar styling, focus-visible ring, base resets
+ * Dependencies: Tailwind CSS
+ */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-surface-border;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-surface-bg text-ink-900 font-sans antialiased;
+  }
+
+  /* Consistent keyboard focus ring across all interactive elements */
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2 ring-offset-white;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-ink-400/40 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-ink-400/60;
+  }
+}
+
+@layer components {
+  /* Reusable card surface used by Card, StatCard, ChartCard, Modal */
+  .surface-card {
+    @apply bg-surface-card rounded-card shadow-card border border-surface-border;
+  }
+}
