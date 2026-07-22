@@ -24,11 +24,15 @@ clearly marked with a TODO for when the real auth API is connected).
 - ✅ Routing — every sidebar item routes to a page (built pages or placeholders)
 - ✅ Dashboard — fully built: 8 stat cards, Revenue Overview + Outstanding Trend charts, Quick Actions
 
+- ✅ Clients — fully built: list (search/filter/sort/paginate), Add/Edit modal (validated with
+  Zod), View drawer, Delete, seeded with sample data via `clientService` (swap-in-ready for the
+  real API)
+
 ## What's still a placeholder
 
-Every module except Dashboard currently renders a "coming soon" placeholder page
+Every module except Dashboard and Clients currently renders a "coming soon" placeholder page
 (see `src/pages/PlaceholderPage.tsx`). These get built one at a time, in the order agreed:
-Clients → Projects → Milestones → Quotations → Invoices → Payments → Receipts → Reports → Settings,
+Projects → Milestones → Quotations → Invoices → Payments → Receipts → Reports → Settings,
 plus the additional nav items from your locked wireframe (Leads, Agreements, Credit/Debit Notes,
 Statement of Account, AMC Contracts, Expenses).
 
