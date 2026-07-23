@@ -145,6 +145,12 @@ export async function getClientById(id: string): Promise<Client | undefined> {
   return delay(SEED_CLIENTS.find((c) => c.id === id));
 }
 
+export async function getAllClients(): Promise<Client[]> {
+  // TODO: replace with `const { data } = await axiosClient.get<Client[]>('/clients/all'); return data;`
+  // Lightweight, unpaginated list used to populate Client pickers (e.g. Projects create/edit form)
+  return delay([...SEED_CLIENTS]);
+}
+
 export async function createClient(values: ClientFormValues): Promise<Client> {
   // TODO: replace with `const { data } = await axiosClient.post<Client>('/clients', values); return data;`
   const client: Client = {

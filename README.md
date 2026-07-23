@@ -27,12 +27,17 @@ clearly marked with a TODO for when the real auth API is connected).
 - ✅ Clients — fully built: list (search/filter/sort/paginate), Add/Edit modal (validated with
   Zod), View drawer, Delete, seeded with sample data via `clientService` (swap-in-ready for the
   real API)
+- ✅ Projects — fully built: list (search/filter by status+client/sort/paginate), Add/Edit modal
+  (Client picker sourced from Clients module, MSA/Quotation No, dates, status), Project Detail
+  page with Financial Summary (Project Value / Received Till Date / Outstanding Balance) and the
+  full Project View Tabs shell (Milestones/Invoices/Payments/Receipts/Files/Notes render a
+  "coming soon" note until those modules are built)
 
 ## What's still a placeholder
 
-Every module except Dashboard and Clients currently renders a "coming soon" placeholder page
-(see `src/pages/PlaceholderPage.tsx`). These get built one at a time, in the order agreed:
-Projects → Milestones → Quotations → Invoices → Payments → Receipts → Reports → Settings,
+Every module except Dashboard, Clients, and Projects currently renders a "coming soon"
+placeholder page (see `src/pages/PlaceholderPage.tsx`). These get built one at a time, in the
+order agreed: Milestones → Quotations → Invoices → Payments → Receipts → Reports → Settings,
 plus the additional nav items from your locked wireframe (Leads, Agreements, Credit/Debit Notes,
 Statement of Account, AMC Contracts, Expenses).
 
