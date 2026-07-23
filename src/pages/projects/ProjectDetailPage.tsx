@@ -24,11 +24,11 @@ import { formatCompactCurrency } from '../../utils/formatCurrency';
 import { ROUTES } from '../../routes/routePaths';
 import { useProject, useUpdateProject } from '../../features/projects/hooks/useProjects';
 import { ProjectFormModal } from '../../features/projects/components/ProjectFormModal';
+import { MilestonesTab } from '../../features/milestones/components/MilestonesTab';
 import { toast } from '../../components/ui/Toast';
 import type { ProjectFormValues } from '../../types/project.types';
 
 const FUTURE_TABS = [
-  { value: 'milestones', label: 'Milestones' },
   { value: 'invoices', label: 'Invoices' },
   { value: 'payments', label: 'Payments' },
   { value: 'receipts', label: 'Receipts' },
@@ -97,6 +97,7 @@ export default function ProjectDetailPage() {
       <Tabs defaultValue="overview">
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="milestones">Milestones</TabsTrigger>
           {FUTURE_TABS.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value}>
               {tab.label}
@@ -160,6 +161,10 @@ export default function ProjectDetailPage() {
               </CardBody>
             </Card>
           </div>
+        </TabsContent>
+
+        <TabsContent value="milestones">
+          <MilestonesTab projectId={project.id} projectName={project.projectName} />
         </TabsContent>
 
         {FUTURE_TABS.map((tab) => (

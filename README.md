@@ -33,13 +33,19 @@ clearly marked with a TODO for when the real auth API is connected).
   full Project View Tabs shell (Milestones/Invoices/Payments/Receipts/Files/Notes render a
   "coming soon" note until those modules are built)
 
+- ✅ Milestones — fully built as the Project Detail page's "Milestones" tab (per the locked
+  wireframe, Milestones is not a standalone sidebar menu — it's project-scoped): Milestone
+  Dashboard Cards (Total/Completed Value/Pending Value/Overdue), milestone timeline table
+  (Milestone ID/Name/Amount/Due Date/Linked Deliverable/Status), Create/Edit popup, Delete —
+  seeded with sample data via `milestoneService` (swap-in-ready for the real API)
+
 ## What's still a placeholder
 
-Every module except Dashboard, Clients, and Projects currently renders a "coming soon"
-placeholder page (see `src/pages/PlaceholderPage.tsx`). These get built one at a time, in the
-order agreed: Milestones → Quotations → Invoices → Payments → Receipts → Reports → Settings,
-plus the additional nav items from your locked wireframe (Leads, Agreements, Credit/Debit Notes,
-Statement of Account, AMC Contracts, Expenses).
+Every module except Dashboard, Clients, Projects, and Milestones currently renders a "coming
+soon" placeholder page/tab. These get built one at a time, in the order agreed: Quotations →
+Invoices → Payments → Receipts → Reports → Settings, plus the additional nav items from your
+locked wireframe (Leads, Agreements, Credit/Debit Notes, Statement of Account, AMC Contracts,
+Expenses).
 
 ## Tech Stack
 
