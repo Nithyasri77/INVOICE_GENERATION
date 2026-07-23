@@ -36,6 +36,9 @@ const STATUS_COLOR_MAP: Record<string, StatusVariant> = {
   // AMC
   'Expiring Soon': 'warning',
   Expired: 'danger',
+  // Quotation (Draft/Sent/Expired share colors with Invoice/AMC statuses above)
+  Accepted: 'success',
+  Rejected: 'danger',
 };
 
 export interface StatusBadgeProps {

@@ -37,3 +37,4 @@ export type MilestoneStatus = 'Not Started' | 'In Progress' | 'Invoice Raised' |
 export type ProjectStatus = 'Development' | 'UAT' | 'Live' | 'On Hold' | 'Completed';
 export type ClientStatus = 'Active' | 'Inactive';
 export type AmcStatus = 'Active' | 'Expiring Soon' | 'Expired';
+export type QuotationStatus = 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Expired';

@@ -39,10 +39,17 @@ clearly marked with a TODO for when the real auth API is connected).
   (Milestone ID/Name/Amount/Due Date/Linked Deliverable/Status), Create/Edit popup, Delete —
   seeded with sample data via `milestoneService` (swap-in-ready for the real API)
 
+- ✅ Quotations — fully built: list (search/filter by status+client/sort/paginate), Add/Edit
+  modal (Client picker shared with Projects, amount, quotation/valid-until dates, status),
+  Delete — seeded with sample data via `quotationService` (swap-in-ready for the real API).
+  Note: the BRD didn't specify detailed Quotation fields, so this follows standard pre-sales
+  quotation practice (Quotation No, Client, Quotation Date, Valid Until, Amount, Status, Notes),
+  consistent with the "Quotation No" already referenced on the Projects module.
+
 ## What's still a placeholder
 
-Every module except Dashboard, Clients, Projects, and Milestones currently renders a "coming
-soon" placeholder page/tab. These get built one at a time, in the order agreed: Quotations →
+Every module except Dashboard, Clients, Projects, Milestones, and Quotations currently renders a
+"coming soon" placeholder page/tab. These get built one at a time, in the order agreed:
 Invoices → Payments → Receipts → Reports → Settings, plus the additional nav items from your
 locked wireframe (Leads, Agreements, Credit/Debit Notes, Statement of Account, AMC Contracts,
 Expenses).
