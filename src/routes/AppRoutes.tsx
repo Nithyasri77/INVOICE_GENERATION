@@ -9,6 +9,7 @@ import { Routes, Route } from 'react-router-dom';
 import { DashboardLayout } from '../layouts/DashboardLayout';
 import { AuthLayout } from '../layouts/AuthLayout';
 import { ProtectedRoute } from './ProtectedRoute';
+import { ROUTES } from './routePaths';
 
 import LoginPage from '../pages/auth/LoginPage';
 import DashboardPage from '../pages/dashboard/DashboardPage';
@@ -57,7 +58,7 @@ export function AppRoutes() {
 
           <Route path="/billing/invoices" element={<InvoicesListPage />} />
           <Route path="/billing/payments-received" element={<PaymentsReceivedListPage />} />
-          <Route path="/billing/receipt-vouchers" element={<ReceiptVouchersListPage />} />
+          <Route path={ROUTES.BILLING.RECEIPT_VOUCHERS} element={<ReceiptVouchersListPage />} />
           <Route path="/billing/credit-notes" element={<CreditNotesListPage />} />
           <Route path="/billing/debit-notes" element={<DebitNotesListPage />} />
           <Route path="/billing/statement-of-account" element={<StatementOfAccountPage />} />
