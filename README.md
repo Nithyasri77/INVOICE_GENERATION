@@ -46,13 +46,17 @@ clearly marked with a TODO for when the real auth API is connected).
   quotation practice (Quotation No, Client, Quotation Date, Valid Until, Amount, Status, Notes),
   consistent with the "Quotation No" already referenced on the Projects module.
 
+- ✅ Invoices — fully built: list (search/filter by status+project/sort/paginate), Create/Edit
+  modal (Project picker, Service Category, Billing Type, Billing Stage, dates, Amount, GST,
+  Status — all per BRD's Invoices Module Fields), Delete — seeded with sample data via
+  `invoiceService` (swap-in-ready for the real API)
+
 ## What's still a placeholder
 
-Every module except Dashboard, Clients, Projects, Milestones, and Quotations currently renders a
-"coming soon" placeholder page/tab. These get built one at a time, in the order agreed:
-Invoices → Payments → Receipts → Reports → Settings, plus the additional nav items from your
-locked wireframe (Leads, Agreements, Credit/Debit Notes, Statement of Account, AMC Contracts,
-Expenses).
+Every module except Dashboard, Clients, Projects, Milestones, Quotations, and Invoices currently
+renders a "coming soon" placeholder page/tab. These get built one at a time, in the order agreed:
+Payments → Receipts → Reports → Settings, plus the additional nav items from your locked
+wireframe (Leads, Agreements, Credit/Debit Notes, Statement of Account, AMC Contracts, Expenses).
 
 ## Tech Stack
 

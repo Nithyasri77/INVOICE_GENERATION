@@ -154,6 +154,12 @@ export async function getProjectById(id: string): Promise<Project | undefined> {
   return delay(SEED_PROJECTS.find((p) => p.id === id));
 }
 
+export async function getAllProjects(): Promise<Project[]> {
+  // TODO: replace with `const { data } = await axiosClient.get<Project[]>('/projects/all'); return data;`
+  // Lightweight, unpaginated list used to populate Project pickers (e.g. Invoices create/edit form)
+  return delay([...SEED_PROJECTS]);
+}
+
 export async function createProject(values: ProjectFormValues): Promise<Project> {
   // TODO: replace with `const { data } = await axiosClient.post<Project>('/projects', values); return data;`
   const client = await getClientById(values.clientId);
