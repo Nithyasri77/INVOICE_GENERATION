@@ -39,6 +39,9 @@ const STATUS_COLOR_MAP: Record<string, StatusVariant> = {
   // Quotation (Draft/Sent/Expired share colors with Invoice/AMC statuses above)
   Accepted: 'success',
   Rejected: 'danger',
+  Open: 'warning',
+  Applied: 'success',
+  Cancelled: 'neutral',
 };
 
 export interface StatusBadgeProps {

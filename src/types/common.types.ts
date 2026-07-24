@@ -3,7 +3,8 @@
  * Responsibilities: Single source of truth so services/features don't redefine these shapes
  * Dependencies: none
  * Export: PaginatedResponse<T>, ApiResponse<T>, SortDirection, InvoiceStatus, PaymentStatus,
- *          MilestoneStatus, ProjectStatus, ClientStatus
+ *          MilestoneStatus, ProjectStatus, ClientStatus, AmcStatus, QuotationStatus,
+ *          DebitNoteStatus
  */
 
 export interface ApiResponse<T> {
@@ -38,3 +39,4 @@ export type ProjectStatus = 'Development' | 'UAT' | 'Live' | 'On Hold' | 'Comple
 export type ClientStatus = 'Active' | 'Inactive';
 export type AmcStatus = 'Active' | 'Expiring Soon' | 'Expired';
 export type QuotationStatus = 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Expired';
+export type DebitNoteStatus = 'Open' | 'Applied' | 'Cancelled';

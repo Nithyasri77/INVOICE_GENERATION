@@ -41,3 +41,5 @@ export interface ClientListParams {
   sortBy?: string;
   sortDirection?: 'asc' | 'desc';
 }
+
+export type DebitNoteStatus = 'Open' | 'Applied' | 'Cancelled';
