@@ -40,3 +40,4 @@ export type ClientStatus = 'Active' | 'Inactive';
 export type AmcStatus = 'Active' | 'Expiring Soon' | 'Expired';
 export type QuotationStatus = 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Expired';
 export type DebitNoteStatus = 'Open' | 'Applied' | 'Cancelled';
+export type CreditNoteStatus = 'Open' | 'Applied' | 'Cancelled';
