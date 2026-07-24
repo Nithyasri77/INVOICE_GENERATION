@@ -51,12 +51,17 @@ clearly marked with a TODO for when the real auth API is connected).
   Status — all per BRD's Invoices Module Fields), Delete — seeded with sample data via
   `invoiceService` (swap-in-ready for the real API)
 
+- ✅ Payments — fully built: list (search/filter by status+mode/sort/paginate), Record/Edit modal
+  (Invoice picker, Amount, Payment Date, Mode, Reference Number, Remarks, Status — per BRD's
+  Payments Module Fields), Delete — seeded with sample data via `paymentService` (swap-in-ready
+  for the real API)
+
 ## What's still a placeholder
 
-Every module except Dashboard, Clients, Projects, Milestones, Quotations, and Invoices currently
-renders a "coming soon" placeholder page/tab. These get built one at a time, in the order agreed:
-Payments → Receipts → Reports → Settings, plus the additional nav items from your locked
-wireframe (Leads, Agreements, Credit/Debit Notes, Statement of Account, AMC Contracts, Expenses).
+Every module except Dashboard, Clients, Projects, Milestones, Quotations, Invoices, and Payments
+currently renders a "coming soon" placeholder page/tab (aside from anything the team has built
+separately — check `git log` for the latest). These get built one at a time, in the order agreed:
+Receipts → Reports → Settings, plus the additional nav items from your locked wireframe.
 
 ## Tech Stack
 

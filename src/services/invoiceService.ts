@@ -170,6 +170,12 @@ export async function getInvoiceById(id: string): Promise<Invoice | undefined> {
   return delay(SEED_INVOICES.find((r) => r.id === id));
 }
 
+export async function getAllInvoices(): Promise<Invoice[]> {
+  // TODO: replace with `const { data } = await axiosClient.get<Invoice[]>('/invoices/all'); return data;`
+  // Lightweight, unpaginated list used to populate Invoice pickers (e.g. Payments create/edit form)
+  return delay([...SEED_INVOICES]);
+}
+
 export async function createInvoice(values: InvoiceFormValues): Promise<Invoice> {
   // TODO: replace with `const { data } = await axiosClient.post<Invoice>('/invoices', values); return data;`
   const project = await getProjectById(values.projectId);
