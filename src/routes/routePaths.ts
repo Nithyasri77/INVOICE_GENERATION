@@ -12,6 +12,7 @@ export const ROUTES = {
   CLIENT_DETAIL: (id: string) => `/clients/${id}`,
 
   LEADS: '/leads',
+  LEAD_DETAIL: (id: string) => `/leads/${id}`,
 
   QUOTATIONS: '/quotations',
   QUOTATION_DETAIL: (id: string) => `/quotations/${id}`,

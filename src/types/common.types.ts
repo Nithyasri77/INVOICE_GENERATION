@@ -4,7 +4,7 @@
  * Dependencies: none
  * Export: PaginatedResponse<T>, ApiResponse<T>, SortDirection, InvoiceStatus, PaymentStatus,
  *          MilestoneStatus, ProjectStatus, ClientStatus, AmcStatus, QuotationStatus,
- *          DebitNoteStatus
+ *          DebitNoteStatus, CreditNoteStatus
  */
 
 export interface ApiResponse<T> {
@@ -37,7 +37,7 @@ export type PaymentStatus = 'Reconciled' | 'Pending';
 export type MilestoneStatus = 'Not Started' | 'In Progress' | 'Invoice Raised' | 'Paid' | 'Completed';
 export type ProjectStatus = 'Development' | 'UAT' | 'Live' | 'On Hold' | 'Completed';
 export type ClientStatus = 'Active' | 'Inactive';
-export type AmcStatus = 'Active' | 'Expiring Soon' | 'Expired';
+export type AmcStatus = 'Active' | 'Upcoming Renewal' | 'Expiring Soon' | 'Expired' | 'Cancelled';
 export type QuotationStatus = 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Expired';
 export type DebitNoteStatus = 'Open' | 'Applied' | 'Cancelled';
 export type CreditNoteStatus = 'Open' | 'Applied' | 'Cancelled';
