@@ -1,21 +1,22 @@
 /**
  * Purpose: Aggregation layer for the Reports module (BRD: Outstanding/Revenue/Client-wise/
  *          Project-wise/AMC Revenue/Overdue Payments/Monthly Collections)
- * Responsibilities: Derive every report live from Invoices + Payments so Reports always reflects
- *                    the current state of those modules — no separate seed dataset to drift out
- *                    of sync. AMC Revenue has no source module yet (AMC Contracts is a Future
- *                    Module per BRD), so getAmcRevenue returns an empty result by design.
+ * Responsibilities: Derive every report live from Invoices + Payments (and AMC Contracts for AMC
+ *                    Revenue) so Reports always reflects the current state of those modules — no
+ *                    separate seed dataset to drift out of sync.
  * NOTE: No Reports API endpoint exists yet. Each function is wired to call axiosClient (see the
- *       commented real call) but currently computes from the in-memory Invoice/Payment seed data.
- *       Swap the TODO block for the real call once the backend is live.
- * Dependencies: invoiceService, paymentService, report.types
+ *       commented real call) but currently computes from the in-memory Invoice/Payment/AMC seed
+ *       data. Swap the TODO block for the real call once the backend is live.
+ * Dependencies: invoiceService, paymentService, amcService, report.types
  * Export: getRevenueSummary, getOutstandingReport, getClientRevenueReport,
  *          getProjectRevenueReport, getOverduePaymentsReport, getMonthlyCollectionsReport,
  *          getAmcRevenueReport
  */
 import { getAllInvoices } from './invoiceService';
 import { getAllPayments } from './paymentService';
+import { getAmcContracts } from './amcService';
 import type {
+  AmcRevenueRow,
   ClientRevenueRow,
   MonthlyCollectionRow,
   OutstandingRow,
@@ -187,8 +188,21 @@ export async function getMonthlyCollectionsReport(): Promise<MonthlyCollectionRo
   );
 }
 
-/** AMC Contracts is a BRD Future Module — no source data exists yet, so this is intentionally empty. */
-export async function getAmcRevenueReport(): Promise<[]> {
-  // TODO: replace with `const { data } = await axiosClient.get<AmcRevenueRow[]>('/reports/amc-revenue'); return data;` once AMC Contracts is built
-  return delay([]);
+/** AMC Revenue — sourced from the AMC Contracts module now that it's built. */
+export async function getAmcRevenueReport(): Promise<AmcRevenueRow[]> {
+  // TODO: replace with `const { data } = await axiosClient.get<AmcRevenueRow[]>('/reports/amc-revenue'); return data;`
+  const { data: contracts } = await getAmcContracts({ page: 1, pageSize: 1000 });
+
+  return delay(
+    contracts
+      .map((c) => ({
+        amcNumber: c.amcNumber,
+        clientName: c.clientName,
+        projectName: c.projectName,
+        contractValue: c.contractValue,
+        status: c.status,
+        renewalDate: c.renewalDate,
+      }))
+      .sort((a, b) => b.contractValue - a.contractValue)
+  );
 }

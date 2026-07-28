@@ -12,11 +12,11 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { TrendingUp, PiggyBank, AlertTriangle } from 'lucide-react';
 import { PageHeader } from '../../components/shared/PageHeader';
 import { ExportButton, type ExportFormat } from '../../components/shared/ExportButton';
+import { StatusBadge } from '../../components/shared/StatusBadge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { Card, CardBody } from '../../components/ui/Card';
 import { DataTable } from '../../components/ui/Table';
 import { Loader } from '../../components/ui/Loader';
-import { EmptyState } from '../../components/ui/EmptyState';
 import { toast } from '../../components/ui/Toast';
 import { formatCompactCurrency } from '../../utils/formatCurrency';
 import {
@@ -29,6 +29,7 @@ import {
   useAmcRevenueReport,
 } from '../../features/reports/hooks/useReports';
 import type {
+  AmcRevenueRow,
   ClientRevenueRow,
   MonthlyCollectionRow,
   OutstandingRow,
@@ -218,12 +219,25 @@ function MonthlyCollectionsTab() {
 }
 
 function AmcRevenueTab() {
-  useAmcRevenueReport();
+  const query = useAmcRevenueReport();
+  const columns: ColumnDef<AmcRevenueRow, any>[] = [
+    { accessorKey: 'amcNumber', header: 'AMC No' },
+    { accessorKey: 'clientName', header: 'Client' },
+    { accessorKey: 'projectName', header: 'Project' },
+    { accessorKey: 'contractValue', header: 'Contract Value', cell: ({ getValue }) => formatCompactCurrency(getValue()) },
+    { accessorKey: 'status', header: 'Status', cell: ({ getValue }) => <StatusBadge status={getValue() as string} /> },
+    { accessorKey: 'renewalDate', header: 'Renewal Date' },
+  ];
   return (
     <ReportSection title="AMC Revenue" onExport={() => handleExport('AMC Revenue', 'csv')}>
-      <EmptyState
-        title="AMC Contracts module not built yet"
-        description="AMC Revenue will populate once the AMC Contracts module (a BRD Future Module) is built."
+      <DataTable
+        columns={columns}
+        data={query.data ?? []}
+        isLoading={query.isLoading}
+        isError={query.isError}
+        onRetry={() => query.refetch()}
+        emptyTitle="No AMC contracts yet"
+        emptyDescription="AMC Revenue will populate once contracts are added in AMC Contracts."
       />
     </ReportSection>
   );

@@ -55,3 +55,12 @@ export interface MonthlyCollectionRow {
   monthLabel: string; // e.g. "May 2025"
   collected: number;
 }
+
+export interface AmcRevenueRow {
+  amcNumber: string;
+  clientName: string;
+  projectName: string;
+  contractValue: number;
+  status: string;
+  renewalDate: string;
+}
