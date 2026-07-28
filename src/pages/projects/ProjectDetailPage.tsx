@@ -25,16 +25,15 @@ import { ROUTES } from '../../routes/routePaths';
 import { useProject, useUpdateProject } from '../../features/projects/hooks/useProjects';
 import { ProjectFormModal } from '../../features/projects/components/ProjectFormModal';
 import { MilestonesTab } from '../../features/milestones/components/MilestonesTab';
+import { ProjectInvoicesTab } from '../../features/projects/components/ProjectInvoicesTab';
+import { ProjectPaymentsTab } from '../../features/projects/components/ProjectPaymentsTab';
+import { ProjectReceiptsTab } from '../../features/projects/components/ProjectReceiptsTab';
+import { ProjectFilesTab } from '../../features/projects/components/files/ProjectFilesTab';
+import { ProjectNotesTab } from '../../features/projects/components/notes/ProjectNotesTab';
 import { toast } from '../../components/ui/Toast';
 import type { ProjectFormValues } from '../../types/project.types';
 
-const FUTURE_TABS = [
-  { value: 'invoices', label: 'Invoices' },
-  { value: 'payments', label: 'Payments' },
-  { value: 'receipts', label: 'Receipts' },
-  { value: 'files', label: 'Files' },
-  { value: 'notes', label: 'Notes' },
-];
+const FUTURE_TABS: { value: string; label: string }[] = [];
 
 export default function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -98,6 +97,11 @@ export default function ProjectDetailPage() {
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="milestones">Milestones</TabsTrigger>
+          <TabsTrigger value="invoices">Invoices</TabsTrigger>
+          <TabsTrigger value="payments">Payments</TabsTrigger>
+          <TabsTrigger value="receipts">Receipts</TabsTrigger>
+          <TabsTrigger value="files">Files</TabsTrigger>
+          <TabsTrigger value="notes">Notes</TabsTrigger>
           {FUTURE_TABS.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value}>
               {tab.label}
@@ -165,6 +169,26 @@ export default function ProjectDetailPage() {
 
         <TabsContent value="milestones">
           <MilestonesTab projectId={project.id} projectName={project.projectName} />
+        </TabsContent>
+
+        <TabsContent value="invoices">
+          <ProjectInvoicesTab projectId={project.id} />
+        </TabsContent>
+
+        <TabsContent value="payments">
+          <ProjectPaymentsTab projectId={project.id} />
+        </TabsContent>
+
+        <TabsContent value="receipts">
+          <ProjectReceiptsTab projectId={project.id} />
+        </TabsContent>
+
+        <TabsContent value="files">
+          <ProjectFilesTab projectId={project.id} />
+        </TabsContent>
+
+        <TabsContent value="notes">
+          <ProjectNotesTab projectId={project.id} />
         </TabsContent>
 
         {FUTURE_TABS.map((tab) => (
