@@ -1,5 +1,5 @@
 /**
- * Purpose: Maps business-domain status strings (Invoice/Payment/Milestone/Project/Client/AMC/Lead/Expense)
+ * Purpose: Maps business-domain status strings (Invoice/Payment/Milestone/Project/Client/AMC)
  *          to the correct Badge color variant — single source of truth so colors never drift
  *          between modules (e.g. "Paid" is always green everywhere)
  * Responsibilities: One lookup table per status type; falls back to neutral for unmapped values
@@ -34,28 +34,18 @@ const STATUS_COLOR_MAP: Record<string, StatusVariant> = {
   Active: 'success',
   Inactive: 'neutral',
   // AMC
-  'Upcoming Renewal': 'warning',
   'Expiring Soon': 'warning',
   Expired: 'danger',
-  Cancelled: 'neutral',
-  // Lead
-  New: 'info',
-  Contacted: 'info',
-  Qualified: 'warning',
-  'Proposal Sent': 'warning',
-  Negotiation: 'warning',
-  Won: 'success',
-  Lost: 'danger',
-  // Expense approval
-  'Pending Approval': 'warning',
-  Approved: 'success',
-  Rejected: 'danger',
-  Reimbursed: 'info',
   // Quotation (Draft/Sent/Expired share colors with Invoice/AMC statuses above)
   Accepted: 'success',
+  Rejected: 'danger',
   // Billing lifecycle statuses used by debit and credit notes
   Open: 'warning',
   Applied: 'success',
+  Cancelled: 'neutral',
+  
+  // Agreements lifecycle statuses
+  Signed: 'success',
 };
 
 export interface StatusBadgeProps {
