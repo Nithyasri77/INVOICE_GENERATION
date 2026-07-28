@@ -61,11 +61,17 @@ clearly marked with a TODO for when the real auth API is connected).
   Invoices + Payments (no separate seed dataset, so it never drifts out of sync) via
   `reportService`
 
+- ✅ Expenses — fully built: list (search/filter by status+category/sort/paginate), Add/Edit
+  modal (optional Project link for overhead vs. project-billed costs, Category, Vendor, Payment
+  Mode, Status), Delete — seeded with sample data via `expenseService` (swap-in-ready for the
+  real API). Note: the BRD only names Expense Tracking as a Future Module without a field list,
+  so this follows standard project-expense tracking practice.
+
 ## What's still a placeholder
 
-Every module except Dashboard, Clients, Projects, Milestones, Quotations, Invoices, Payments, and
-Reports currently renders a "coming soon" placeholder page/tab (aside from anything the team has
-built separately — check `git log` for the latest). Next up: Expenses and Settings, plus anything
+Every module except Dashboard, Clients, Projects, Milestones, Quotations, Invoices, Payments,
+Reports, and Expenses currently renders a "coming soon" placeholder page/tab (aside from anything
+the team has built separately — check `git log` for the latest). Next up: Settings, plus anything
 else from your locked wireframe.
 
 ## Tech Stack

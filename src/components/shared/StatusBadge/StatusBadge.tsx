@@ -50,6 +50,7 @@ const STATUS_COLOR_MAP: Record<string, StatusVariant> = {
   'Pending Approval': 'warning',
   Approved: 'success',
   Rejected: 'danger',
+  Reimbursed: 'info',
   // Quotation (Draft/Sent/Expired share colors with Invoice/AMC statuses above)
   Accepted: 'success',
   // Billing lifecycle statuses used by debit and credit notes

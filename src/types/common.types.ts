@@ -41,3 +41,4 @@ export type AmcStatus = 'Active' | 'Upcoming Renewal' | 'Expiring Soon' | 'Expir
 export type QuotationStatus = 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Expired';
 export type DebitNoteStatus = 'Open' | 'Applied' | 'Cancelled';
 export type CreditNoteStatus = 'Open' | 'Applied' | 'Cancelled';
+export type ExpenseStatus = 'Pending Approval' | 'Approved' | 'Rejected' | 'Reimbursed';
