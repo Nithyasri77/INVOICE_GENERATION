@@ -67,12 +67,17 @@ clearly marked with a TODO for when the real auth API is connected).
   real API). Note: the BRD only names Expense Tracking as a Future Module without a field list,
   so this follows standard project-expense tracking practice.
 
+- ✅ Settings — fully built: tabs for every BRD section (Company Profile, GST Details, Bank
+  Details, Invoice/Receipt Number Format, Reminder Templates, Terms & Conditions), each section
+  saves independently via its own mutation hook, seeded with sample data via `settingsService`
+  (swap-in-ready for the real API)
+
 ## What's still a placeholder
 
-Every module except Dashboard, Clients, Projects, Milestones, Quotations, Invoices, Payments,
-Reports, and Expenses currently renders a "coming soon" placeholder page/tab (aside from anything
-the team has built separately — check `git log` for the latest). Next up: Settings, plus anything
-else from your locked wireframe.
+Aside from anything the team has built separately (check `git log` for the latest), every BRD
+MVP-screen module is now built: Dashboard, Clients, Projects, Milestones, Quotations, Invoices,
+Payments, Reports, Expenses, and Settings. Remaining work is whatever the team adds next from the
+locked wireframe or future BRD modules.
 
 ## Tech Stack
 
