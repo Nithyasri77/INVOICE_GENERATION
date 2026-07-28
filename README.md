@@ -56,12 +56,17 @@ clearly marked with a TODO for when the real auth API is connected).
   Payments Module Fields), Delete — seeded with sample data via `paymentService` (swap-in-ready
   for the real API)
 
+- ✅ Reports — fully built: tabs for every BRD report (Outstanding, Revenue, Client-wise Revenue,
+  Project-wise Revenue, AMC Revenue, Overdue Payments, Monthly Collections), all derived live from
+  Invoices + Payments (no separate seed dataset, so it never drifts out of sync) via
+  `reportService`
+
 ## What's still a placeholder
 
-Every module except Dashboard, Clients, Projects, Milestones, Quotations, Invoices, and Payments
-currently renders a "coming soon" placeholder page/tab (aside from anything the team has built
-separately — check `git log` for the latest). These get built one at a time, in the order agreed:
-Receipts → Reports → Settings, plus the additional nav items from your locked wireframe.
+Every module except Dashboard, Clients, Projects, Milestones, Quotations, Invoices, Payments, and
+Reports currently renders a "coming soon" placeholder page/tab (aside from anything the team has
+built separately — check `git log` for the latest). Next up: Expenses and Settings, plus anything
+else from your locked wireframe.
 
 ## Tech Stack
 

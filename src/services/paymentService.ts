@@ -151,6 +151,12 @@ export async function getPaymentById(id: string): Promise<Payment | undefined> {
   return delay(SEED_PAYMENTS.find((r) => r.id === id));
 }
 
+export async function getAllPayments(): Promise<Payment[]> {
+  // TODO: replace with `const { data } = await axiosClient.get<Payment[]>('/payments/all'); return data;`
+  // Lightweight, unpaginated list used by the Reports module to aggregate collections
+  return delay([...SEED_PAYMENTS]);
+}
+
 export async function createPayment(values: PaymentFormValues): Promise<Payment> {
   // TODO: replace with `const { data } = await axiosClient.post<Payment>('/payments', values); return data;`
   // TODO(Receipts module): per BRD, saving a payment should auto-generate a receipt here.
