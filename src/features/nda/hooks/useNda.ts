@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getNdas, getNdaById, createNda, updateNda, deleteNda } from '../../../services/ndaService';
+import { getNdas, getAllFilteredNdas, getNdaById, createNda, updateNda, deleteNda } from '../../../services/ndaService';
 import type { NdaFormValues, NdaListParams } from '../../../types/nda.types';
 
 const NDA_KEY = 'nda';
@@ -47,5 +47,11 @@ export function useDeleteNda() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [NDA_KEY] });
     },
+  });
+}
+
+export function useExportNdas() {
+  return useMutation({
+    mutationFn: (params: Omit<NdaListParams, 'page' | 'pageSize'>) => getAllFilteredNdas(params),
   });
 }

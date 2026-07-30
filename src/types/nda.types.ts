@@ -10,6 +10,11 @@ export interface Nda {
   status: NdaStatus;
   attachmentRef?: string;
   notes: string;
+  version?: string;
+  createdBy?: string;
+  createdDate?: string;
+  lastUpdated?: string;
+  projectName?: string;
 }
 
 export interface NdaFormValues {

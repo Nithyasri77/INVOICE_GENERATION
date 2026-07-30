@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getMsas, getMsaById, createMsa, updateMsa, deleteMsa } from '../../../services/msaService';
+import { getMsas, getAllFilteredMsas, getMsaById, createMsa, updateMsa, deleteMsa } from '../../../services/msaService';
 import type { MsaFormValues, MsaListParams } from '../../../types/msa.types';
 
 const MSA_KEY = 'msa';
@@ -47,5 +47,11 @@ export function useDeleteMsa() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [MSA_KEY] });
     },
+  });
+}
+
+export function useExportMsas() {
+  return useMutation({
+    mutationFn: (params: Omit<MsaListParams, 'page' | 'pageSize'>) => getAllFilteredMsas(params),
   });
 }

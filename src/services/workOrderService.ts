@@ -25,6 +25,10 @@ let SEED_WORK_ORDERS: WorkOrder[] = [
     status: 'Active',
     attachmentRef: 'wo-aravind.pdf',
     notes: 'Work order aligned to the accepted quotation and project plan.',
+    version: 'v1.0',
+    createdBy: 'Ajith Kumar',
+    createdDate: '2025-01-25',
+    lastUpdated: '2025-02-01',
   },
   {
     id: '2',
@@ -46,6 +50,10 @@ let SEED_WORK_ORDERS: WorkOrder[] = [
     status: 'Signed',
     attachmentRef: 'wo-nithya.pdf',
     notes: 'Signed after the client reviewed the milestone-driven scope.',
+    version: 'v1.0',
+    createdBy: 'Priya Nair',
+    createdDate: '2025-03-01',
+    lastUpdated: '2025-03-10',
   },
   {
     id: '3',
@@ -67,6 +75,10 @@ let SEED_WORK_ORDERS: WorkOrder[] = [
     status: 'Completed',
     attachmentRef: 'wo-prime.pdf',
     notes: 'Completed despite a temporary suspension; final delivery was closed with a change request.',
+    version: 'v1.2',
+    createdBy: 'Rohan Sharma',
+    createdDate: '2024-09-28',
+    lastUpdated: '2025-01-20',
   },
   {
     id: '4',
@@ -88,6 +100,10 @@ let SEED_WORK_ORDERS: WorkOrder[] = [
     status: 'Sent',
     attachmentRef: 'wo-bluewave.pdf',
     notes: 'Work order has been shared with the client procurement team.',
+    version: 'v1.0',
+    createdBy: 'Ajith Kumar',
+    createdDate: '2025-01-10',
+    lastUpdated: '2025-01-15',
   },
   {
     id: '5',
@@ -107,6 +123,10 @@ let SEED_WORK_ORDERS: WorkOrder[] = [
     ],
     status: 'Draft',
     notes: 'Draft work order prepared ahead of the project kickoff.',
+    version: 'v0.8',
+    createdBy: 'System Admin',
+    createdDate: '2025-05-25',
+    lastUpdated: '2025-06-01',
   },
 ];
 
@@ -121,14 +141,17 @@ function nextWorkOrderNo(): string {
   return `WO-${year}-${String(nextId).padStart(3, '0')}`;
 }
 
-export async function getWorkOrders(params: WorkOrderListParams): Promise<PaginatedResponse<WorkOrder>> {
-  // TODO: replace with `const { data } = await axiosClient.get<PaginatedResponse<WorkOrder>>('/agreements/work-orders', { params }); return data;`
+export async function getAllFilteredWorkOrders(params: Omit<WorkOrderListParams, 'page' | 'pageSize'>): Promise<WorkOrder[]> {
   let rows = [...SEED_WORK_ORDERS];
 
   if (params.search) {
     const q = params.search.toLowerCase();
-    rows = rows.filter((row) =>
-      row.workOrderNo.toLowerCase().includes(q) || row.clientName.toLowerCase().includes(q) || row.projectName?.toLowerCase().includes(q) || row.scopeOfWork.toLowerCase().includes(q)
+    rows = rows.filter(
+      (row) =>
+        row.workOrderNo.toLowerCase().includes(q) ||
+        row.clientName.toLowerCase().includes(q) ||
+        row.projectName?.toLowerCase().includes(q) ||
+        row.scopeOfWork.toLowerCase().includes(q)
     );
   }
 
@@ -150,12 +173,18 @@ export async function getWorkOrders(params: WorkOrderListParams): Promise<Pagina
     });
   }
 
+  return delay(rows);
+}
+
+export async function getWorkOrders(params: WorkOrderListParams): Promise<PaginatedResponse<WorkOrder>> {
+  let rows = await getAllFilteredWorkOrders(params);
+
   const totalEntries = rows.length;
   const totalPages = Math.max(1, Math.ceil(totalEntries / params.pageSize));
   const start = (params.page - 1) * params.pageSize;
   const paged = rows.slice(start, start + params.pageSize);
 
-  return delay({ data: paged, page: params.page, pageSize: params.pageSize, totalEntries, totalPages });
+  return { data: paged, page: params.page, pageSize: params.pageSize, totalEntries, totalPages };
 }
 
 export async function getWorkOrderById(id: string): Promise<WorkOrder | undefined> {

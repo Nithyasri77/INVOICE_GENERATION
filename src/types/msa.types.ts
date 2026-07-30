@@ -13,6 +13,11 @@ export interface Msa {
   status: MsaStatus;
   attachmentRef?: string;
   notes: string;
+  version?: string;
+  createdBy?: string;
+  createdDate?: string;
+  lastUpdated?: string;
+  projectName?: string;
 }
 
 export interface MsaFormValues {

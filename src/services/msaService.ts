@@ -16,6 +16,10 @@ let SEED_MSAS: Msa[] = [
     status: 'Signed',
     attachmentRef: 'msa-aravind.pdf',
     notes: 'Commercial legal terms for the enterprise transformation program.',
+    version: 'v1.0',
+    createdBy: 'Ajith Kumar',
+    createdDate: '2025-01-10',
+    lastUpdated: '2025-01-14',
   },
   {
     id: '2',
@@ -30,6 +34,10 @@ let SEED_MSAS: Msa[] = [
     status: 'Signed',
     attachmentRef: 'msa-nithya.pdf',
     notes: 'Covers secure product development and data processing obligations.',
+    version: 'v1.0',
+    createdBy: 'Priya Nair',
+    createdDate: '2025-02-05',
+    lastUpdated: '2025-02-10',
   },
   {
     id: '3',
@@ -43,6 +51,10 @@ let SEED_MSAS: Msa[] = [
     status: 'Sent',
     attachmentRef: 'msa-prime.pdf',
     notes: 'Sent to the client legal team for review around fleet analytics scope.',
+    version: 'v1.1',
+    createdBy: 'Rohan Sharma',
+    createdDate: '2025-04-15',
+    lastUpdated: '2025-04-18',
   },
   {
     id: '4',
@@ -55,6 +67,10 @@ let SEED_MSAS: Msa[] = [
     terminationNoticeDays: 30,
     status: 'Draft',
     notes: 'Draft pending final commercial terms before launch.',
+    version: 'v0.9',
+    createdBy: 'Ajith Kumar',
+    createdDate: '2025-05-28',
+    lastUpdated: '2025-06-01',
   },
   {
     id: '5',
@@ -69,6 +85,10 @@ let SEED_MSAS: Msa[] = [
     status: 'Expired',
     attachmentRef: 'msa-karthik.pdf',
     notes: 'Renewal discussion scheduled with the operations head.',
+    version: 'v1.0',
+    createdBy: 'System Admin',
+    createdDate: '2024-10-15',
+    lastUpdated: '2025-10-20',
   },
 ];
 
@@ -83,14 +103,17 @@ function nextMsaNo(): string {
   return `MSA-${year}-${String(nextId).padStart(3, '0')}`;
 }
 
-export async function getMsas(params: MsaListParams): Promise<PaginatedResponse<Msa>> {
-  // TODO: replace with `const { data } = await axiosClient.get<PaginatedResponse<Msa>>('/agreements/msa', { params }); return data;`
+export async function getAllFilteredMsas(params: Omit<MsaListParams, 'page' | 'pageSize'>): Promise<Msa[]> {
   let rows = [...SEED_MSAS];
 
   if (params.search) {
     const q = params.search.toLowerCase();
-    rows = rows.filter((row) =>
-      row.msaNo.toLowerCase().includes(q) || row.clientName.toLowerCase().includes(q) || row.paymentTerms.toLowerCase().includes(q) || row.notes.toLowerCase().includes(q)
+    rows = rows.filter(
+      (row) =>
+        row.msaNo.toLowerCase().includes(q) ||
+        row.clientName.toLowerCase().includes(q) ||
+        row.paymentTerms.toLowerCase().includes(q) ||
+        row.notes.toLowerCase().includes(q)
     );
   }
 
@@ -112,12 +135,18 @@ export async function getMsas(params: MsaListParams): Promise<PaginatedResponse<
     });
   }
 
+  return delay(rows);
+}
+
+export async function getMsas(params: MsaListParams): Promise<PaginatedResponse<Msa>> {
+  let rows = await getAllFilteredMsas(params);
+
   const totalEntries = rows.length;
   const totalPages = Math.max(1, Math.ceil(totalEntries / params.pageSize));
   const start = (params.page - 1) * params.pageSize;
   const paged = rows.slice(start, start + params.pageSize);
 
-  return delay({ data: paged, page: params.page, pageSize: params.pageSize, totalEntries, totalPages });
+  return { data: paged, page: params.page, pageSize: params.pageSize, totalEntries, totalPages };
 }
 
 export async function getMsaById(id: string): Promise<Msa | undefined> {

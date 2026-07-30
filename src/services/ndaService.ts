@@ -13,6 +13,10 @@ let SEED_NDAS: Nda[] = [
     status: 'Signed',
     attachmentRef: 'nda-aravind.pdf',
     notes: 'Confidentiality agreement executed and active for ERP transformation work.',
+    version: 'v1.0',
+    createdBy: 'Ajith Kumar',
+    createdDate: '2025-01-10',
+    lastUpdated: '2025-01-14',
   },
   {
     id: '2',
@@ -24,6 +28,10 @@ let SEED_NDAS: Nda[] = [
     status: 'Signed',
     attachmentRef: 'nda-nithya.pdf',
     notes: 'Covers product design and customer data handling.',
+    version: 'v1.0',
+    createdBy: 'Priya Nair',
+    createdDate: '2025-02-05',
+    lastUpdated: '2025-02-10',
   },
   {
     id: '3',
@@ -35,6 +43,10 @@ let SEED_NDAS: Nda[] = [
     status: 'Sent',
     attachmentRef: 'nda-prime-link.pdf',
     notes: 'Sent to legal for review after the initial outreach.',
+    version: 'v1.1',
+    createdBy: 'Rohan Sharma',
+    createdDate: '2025-04-15',
+    lastUpdated: '2025-04-18',
   },
   {
     id: '4',
@@ -45,6 +57,10 @@ let SEED_NDAS: Nda[] = [
     expiryDate: '2026-06-01',
     status: 'Draft',
     notes: 'Draft pending signature before onboarding the e-commerce team.',
+    version: 'v0.9',
+    createdBy: 'Ajith Kumar',
+    createdDate: '2025-05-28',
+    lastUpdated: '2025-06-01',
   },
   {
     id: '5',
@@ -56,6 +72,10 @@ let SEED_NDAS: Nda[] = [
     status: 'Expired',
     attachmentRef: 'nda-karthik.pdf',
     notes: 'Renewal reminder has been sent to the client.',
+    version: 'v1.0',
+    createdBy: 'System Admin',
+    createdDate: '2024-10-15',
+    lastUpdated: '2025-10-20',
   },
 ];
 
@@ -70,14 +90,16 @@ function nextNdaNo(): string {
   return `NDA-${year}-${String(nextId).padStart(3, '0')}`;
 }
 
-export async function getNdas(params: NdaListParams): Promise<PaginatedResponse<Nda>> {
-  // TODO: replace with `const { data } = await axiosClient.get<PaginatedResponse<Nda>>('/agreements/nda', { params }); return data;`
+export async function getAllFilteredNdas(params: Omit<NdaListParams, 'page' | 'pageSize'>): Promise<Nda[]> {
   let rows = [...SEED_NDAS];
 
   if (params.search) {
     const q = params.search.toLowerCase();
-    rows = rows.filter((row) =>
-      row.ndaNo.toLowerCase().includes(q) || row.clientName.toLowerCase().includes(q) || row.notes.toLowerCase().includes(q)
+    rows = rows.filter(
+      (row) =>
+        row.ndaNo.toLowerCase().includes(q) ||
+        row.clientName.toLowerCase().includes(q) ||
+        row.notes.toLowerCase().includes(q)
     );
   }
 
@@ -99,12 +121,18 @@ export async function getNdas(params: NdaListParams): Promise<PaginatedResponse<
     });
   }
 
+  return delay(rows);
+}
+
+export async function getNdas(params: NdaListParams): Promise<PaginatedResponse<Nda>> {
+  let rows = await getAllFilteredNdas(params);
+
   const totalEntries = rows.length;
   const totalPages = Math.max(1, Math.ceil(totalEntries / params.pageSize));
   const start = (params.page - 1) * params.pageSize;
   const paged = rows.slice(start, start + params.pageSize);
 
-  return delay({ data: paged, page: params.page, pageSize: params.pageSize, totalEntries, totalPages });
+  return { data: paged, page: params.page, pageSize: params.pageSize, totalEntries, totalPages };
 }
 
 export async function getNdaById(id: string): Promise<Nda | undefined> {

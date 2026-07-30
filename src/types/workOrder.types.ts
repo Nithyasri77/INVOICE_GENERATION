@@ -24,6 +24,10 @@ export interface WorkOrder {
   status: WorkOrderStatus;
   attachmentRef?: string;
   notes: string;
+  version?: string;
+  createdBy?: string;
+  createdDate?: string;
+  lastUpdated?: string;
 }
 
 export interface WorkOrderFormValues {

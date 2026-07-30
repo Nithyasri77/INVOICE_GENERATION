@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getWorkOrders, getWorkOrderById, createWorkOrder, updateWorkOrder, deleteWorkOrder } from '../../../services/workOrderService';
+import { getWorkOrders, getAllFilteredWorkOrders, getWorkOrderById, createWorkOrder, updateWorkOrder, deleteWorkOrder } from '../../../services/workOrderService';
 import { getProjects } from '../../../services/projectService';
 import { getQuotations } from '../../../services/quotationService';
 import type { WorkOrderFormValues, WorkOrderListParams } from '../../../types/workOrder.types';
@@ -49,6 +49,12 @@ export function useDeleteWorkOrder() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [WORK_ORDERS_KEY] });
     },
+  });
+}
+
+export function useExportWorkOrders() {
+  return useMutation({
+    mutationFn: (params: Omit<WorkOrderListParams, 'page' | 'pageSize'>) => getAllFilteredWorkOrders(params),
   });
 }
 

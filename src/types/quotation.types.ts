@@ -20,6 +20,12 @@ export interface Quotation {
   amount: number;
   status: QuotationStatus;
   notes: string;
+  projectName?: string;
+  tax?: number;
+  discount?: number;
+  subtotal?: number;
+  total?: number;
+  createdBy?: string;
 }
 
 /** Shape used by the Add/Edit Quotation form (React Hook Form + Zod) */

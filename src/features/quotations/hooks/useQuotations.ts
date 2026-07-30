@@ -9,6 +9,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getQuotations,
+  getAllFilteredQuotations,
   createQuotation,
   updateQuotation,
   deleteQuotation,
@@ -46,5 +47,11 @@ export function useDeleteQuotation() {
   return useMutation({
     mutationFn: (id: string) => deleteQuotation(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY] }),
+  });
+}
+
+export function useExportQuotations() {
+  return useMutation({
+    mutationFn: (params: Omit<QuotationListParams, 'page' | 'pageSize'>) => getAllFilteredQuotations(params),
   });
 }

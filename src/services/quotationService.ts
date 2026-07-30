@@ -18,55 +18,85 @@ let SEED_QUOTATIONS: Quotation[] = [
     quotationNo: 'QT-2025-011',
     clientId: '1',
     clientName: 'Aravind Textiles Pvt Ltd',
+    projectName: 'ERP Revamp — Phase 1',
     quotationDate: '2025-01-20',
     validUntil: '2025-02-20',
     amount: 850000,
+    tax: 153000,
+    discount: 0,
+    subtotal: 850000,
+    total: 1003000,
     status: 'Accepted',
     notes: 'ERP Revamp — Phase 1, converted to PRJ-0001',
+    createdBy: 'Ajith Kumar',
   },
   {
     id: '2',
     quotationNo: 'QT-2025-018',
     clientId: '2',
     clientName: 'Nithya Health Solutions',
+    projectName: 'Patient Portal Redesign',
     quotationDate: '2025-02-25',
     validUntil: '2025-03-25',
     amount: 360000,
+    tax: 64800,
+    discount: 10000,
+    subtotal: 360000,
+    total: 414800,
     status: 'Accepted',
     notes: 'Patient Portal Redesign, converted to PRJ-0002',
+    createdBy: 'Priya Nair',
   },
   {
     id: '3',
     quotationNo: 'QT-2025-002',
     clientId: '4',
     clientName: 'BlueWave Retail',
+    projectName: 'E-commerce Storefront',
     quotationDate: '2025-01-05',
     validUntil: '2025-02-05',
     amount: 980000,
+    tax: 176400,
+    discount: 20000,
+    subtotal: 980000,
+    total: 1136400,
     status: 'Accepted',
     notes: 'E-commerce Storefront, converted to PRJ-0004',
+    createdBy: 'Rohan Sharma',
   },
   {
     id: '4',
     quotationNo: 'QT-2025-031',
     clientId: '3',
     clientName: 'Prime Logistics Corp',
+    projectName: 'Fleet Tracking Dashboard',
     quotationDate: '2025-06-10',
     validUntil: '2025-07-10',
     amount: 275000,
+    tax: 49500,
+    discount: 0,
+    subtotal: 275000,
+    total: 324500,
     status: 'Sent',
     notes: 'Fleet Tracking Dashboard — Phase 2 proposal',
+    createdBy: 'Ajith Kumar',
   },
   {
     id: '5',
     quotationNo: 'QT-2025-033',
     clientId: '5',
     clientName: 'Karthik Constructions',
+    projectName: 'Site Billing Add-on Module',
     quotationDate: '2025-06-18',
     validUntil: '2025-07-18',
     amount: 150000,
+    tax: 27000,
+    discount: 5000,
+    subtotal: 150000,
+    total: 172000,
     status: 'Draft',
     notes: 'Site Billing add-on module proposal',
+    createdBy: 'System Admin',
   },
 ];
 
@@ -81,8 +111,9 @@ function nextQuotationNo(): string {
   return `QT-${year}-${String(nextId).padStart(3, '0')}`;
 }
 
-export async function getQuotations(params: QuotationListParams): Promise<PaginatedResponse<Quotation>> {
-  // TODO: replace with `const { data } = await axiosClient.get<PaginatedResponse<Quotation>>('/quotations', { params }); return data;`
+export async function getAllFilteredQuotations(
+  params: Omit<QuotationListParams, 'page' | 'pageSize'>
+): Promise<Quotation[]> {
   let rows = [...SEED_QUOTATIONS];
 
   if (params.search) {
@@ -91,7 +122,8 @@ export async function getQuotations(params: QuotationListParams): Promise<Pagina
       (r) =>
         r.quotationNo.toLowerCase().includes(q) ||
         r.clientName.toLowerCase().includes(q) ||
-        r.notes.toLowerCase().includes(q)
+        r.notes.toLowerCase().includes(q) ||
+        (r.projectName && r.projectName.toLowerCase().includes(q))
     );
   }
 
@@ -113,18 +145,25 @@ export async function getQuotations(params: QuotationListParams): Promise<Pagina
     });
   }
 
+  return delay(rows);
+}
+
+export async function getQuotations(params: QuotationListParams): Promise<PaginatedResponse<Quotation>> {
+  // TODO: replace with `const { data } = await axiosClient.get<PaginatedResponse<Quotation>>('/quotations', { params }); return data;`
+  let rows = await getAllFilteredQuotations(params);
+
   const totalEntries = rows.length;
   const totalPages = Math.max(1, Math.ceil(totalEntries / params.pageSize));
   const start = (params.page - 1) * params.pageSize;
   const paged = rows.slice(start, start + params.pageSize);
 
-  return delay({
+  return {
     data: paged,
     page: params.page,
     pageSize: params.pageSize,
     totalEntries,
     totalPages,
-  });
+  };
 }
 
 export async function getQuotationById(id: string): Promise<Quotation | undefined> {
