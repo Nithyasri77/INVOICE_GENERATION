@@ -1,0 +1,1088 @@
+From 38b4644d4346074e99ac082e1347315f8b9a417f Mon Sep 17 00:00:00 2001
+From: Claude <assistant@shinecraft.local>
+Date: Thu, 23 Jul 2026 06:21:07 +0000
+Subject: [PATCH] Build Projects module (list, add/edit, detail with financial
+ summary + tabs shell)
+
+---
+ README.md                                     |  11 +-
+ .../projects/components/ProjectFormModal.tsx  | 212 ++++++++++++++
+ src/features/projects/hooks/useProjects.ts    |  76 +++++
+ src/pages/projects/ProjectDetailPage.tsx      | 186 +++++++++++-
+ src/pages/projects/ProjectsListPage.tsx       | 270 +++++++++++++++++-
+ src/services/clientService.ts                 |   6 +
+ src/services/projectService.ts                | 186 ++++++++++++
+ src/types/project.types.ts                    |  48 ++++
+ 8 files changed, 980 insertions(+), 15 deletions(-)
+ create mode 100644 src/features/projects/components/ProjectFormModal.tsx
+ create mode 100644 src/features/projects/hooks/useProjects.ts
+ create mode 100644 src/services/projectService.ts
+ create mode 100644 src/types/project.types.ts
+
+diff --git a/README.md b/README.md
+index ad82ca2..d03a270 100644
+--- a/README.md
++++ b/README.md
+@@ -27,12 +27,17 @@ clearly marked with a TODO for when the real auth API is connected).
+ - ✅ Clients — fully built: list (search/filter/sort/paginate), Add/Edit modal (validated with
+   Zod), View drawer, Delete, seeded with sample data via `clientService` (swap-in-ready for the
+   real API)
++- ✅ Projects — fully built: list (search/filter by status+client/sort/paginate), Add/Edit modal
++  (Client picker sourced from Clients module, MSA/Quotation No, dates, status), Project Detail
++  page with Financial Summary (Project Value / Received Till Date / Outstanding Balance) and the
++  full Project View Tabs shell (Milestones/Invoices/Payments/Receipts/Files/Notes render a
++  "coming soon" note until those modules are built)
+ 
+ ## What's still a placeholder
+ 
+-Every module except Dashboard and Clients currently renders a "coming soon" placeholder page
+-(see `src/pages/PlaceholderPage.tsx`). These get built one at a time, in the order agreed:
+-Projects → Milestones → Quotations → Invoices → Payments → Receipts → Reports → Settings,
++Every module except Dashboard, Clients, and Projects currently renders a "coming soon"
++placeholder page (see `src/pages/PlaceholderPage.tsx`). These get built one at a time, in the
++order agreed: Milestones → Quotations → Invoices → Payments → Receipts → Reports → Settings,
+ plus the additional nav items from your locked wireframe (Leads, Agreements, Credit/Debit Notes,
+ Statement of Account, AMC Contracts, Expenses).
+ 
+diff --git a/src/features/projects/components/ProjectFormModal.tsx b/src/features/projects/components/ProjectFormModal.tsx
+new file mode 100644
+index 0000000..f20a709
+--- /dev/null
++++ b/src/features/projects/components/ProjectFormModal.tsx
+@@ -0,0 +1,212 @@
++/**
++ * Purpose: Add/Edit Project popup form (BRD: Projects Module Fields)
++ * Responsibilities: Validate + submit the Project form; used by ProjectsListPage for both
++ *                    "+ Add Project" (no initialValues) and row "Edit" (initialValues supplied)
++ * Dependencies: Modal/ModalBody/ModalFooter, Input, Select, DatePicker, Button (ui),
++ *               react-hook-form, zod, useClientOptions
++ * Export: ProjectFormModal
++ */
++import { useEffect } from 'react';
++import { useForm, Controller } from 'react-hook-form';
++import { zodResolver } from '@hookform/resolvers/zod';
++import { z } from 'zod';
++import { Modal, ModalBody, ModalFooter } from '../../../components/ui/Modal';
++import { Input } from '../../../components/ui/Input';
++import { Select } from '../../../components/ui/Select';
++import { DatePicker } from '../../../components/ui/DatePicker';
++import { Button } from '../../../components/ui/Button';
++import { useClientOptions } from '../hooks/useProjects';
++import type { Project, ProjectFormValues } from '../../../types/project.types';
++
++const projectSchema = z
++  .object({
++    projectName: z.string().min(2, 'Project name is required'),
++    clientId: z.string().min(1, 'Select a client'),
++    quotationNo: z.string().min(1, 'Quotation number is required'),
++    msaNo: z.string().min(1, 'MSA number is required'),
++    projectValue: z.number().positive('Enter a valid project value'),
++    startDate: z.string().min(1, 'Start date is required'),
++    expectedDelivery: z.string().min(1, 'Expected delivery date is required'),
++    status: z.enum(['Development', 'UAT', 'Live', 'On Hold', 'Completed']),
++    projectManager: z.string().min(2, 'Project manager is required'),
++  })
++  .refine((data) => new Date(data.expectedDelivery) >= new Date(data.startDate), {
++    message: 'Expected delivery must be on or after the start date',
++    path: ['expectedDelivery'],
++  });
++
++export interface ProjectFormModalProps {
++  open: boolean;
++  onOpenChange: (open: boolean) => void;
++  project?: Project;
++  onSubmit: (values: ProjectFormValues) => void;
++  isSubmitting?: boolean;
++}
++
++const STATUS_OPTIONS = [
++  { value: 'Development', label: 'Development' },
++  { value: 'UAT', label: 'UAT' },
++  { value: 'Live', label: 'Live' },
++  { value: 'On Hold', label: 'On Hold' },
++  { value: 'Completed', label: 'Completed' },
++];
++
++const EMPTY_VALUES: ProjectFormValues = {
++  projectName: '',
++  clientId: '',
++  quotationNo: '',
++  msaNo: '',
++  projectValue: 0,
++  startDate: '',
++  expectedDelivery: '',
++  status: 'Development',
++  projectManager: '',
++};
++
++export function ProjectFormModal({ open, onOpenChange, project, onSubmit, isSubmitting }: ProjectFormModalProps) {
++  const isEdit = !!project;
++  const clientOptionsQuery = useClientOptions();
++
++  const {
++    register,
++    control,
++    handleSubmit,
++    reset,
++    formState: { errors },
++  } = useForm<ProjectFormValues>({
++    resolver: zodResolver(projectSchema),
++    defaultValues: EMPTY_VALUES,
++  });
++
++  useEffect(() => {
++    if (open) {
++      reset(
++        project
++          ? {
++              projectName: project.projectName,
++              clientId: project.clientId,
++              quotationNo: project.quotationNo,
++              msaNo: project.msaNo,
++              projectValue: project.projectValue,
++              startDate: project.startDate,
++              expectedDelivery: project.expectedDelivery,
++              status: project.status,
++              projectManager: project.projectManager,
++            }
++          : EMPTY_VALUES
++      );
++    }
++  }, [open, project, reset]);
++
++  return (
++    <Modal
++      open={open}
++      onOpenChange={onOpenChange}
++      title={isEdit ? 'Edit Project' : 'Add Project'}
++      description={isEdit ? "Update this project's details." : 'Create a new project linked to a client.'}
++      size="lg"
++    >
++      <form onSubmit={handleSubmit(onSubmit)}>
++        <ModalBody className="space-y-4">
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input
++              label="Project Name"
++              required
++              placeholder="e.g. ERP Revamp — Phase 1"
++              error={errors.projectName?.message}
++              {...register('projectName')}
++            />
++            <Controller
++              control={control}
++              name="clientId"
++              render={({ field }) => (
++                <Select
++                  label="Client"
++                  required
++                  placeholder="Select a client"
++                  options={clientOptionsQuery.data ?? []}
++                  value={field.value}
++                  onValueChange={field.onChange}
++                  error={errors.clientId?.message}
++                />
++              )}
++            />
++          </div>
++
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input
++              label="Quotation No"
++              required
++              placeholder="e.g. QT-2025-011"
++              error={errors.quotationNo?.message}
++              {...register('quotationNo')}
++            />
++            <Input
++              label="MSA No"
++              required
++              placeholder="e.g. MSA-2025-004"
++              error={errors.msaNo?.message}
++              {...register('msaNo')}
++            />
++          </div>
++
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input
++              label="Project Value (₹)"
++              required
++              type="number"
++              min={0}
++              placeholder="e.g. 850000"
++              error={errors.projectValue?.message}
++              {...register('projectValue', { valueAsNumber: true })}
++            />
++            <Input
++              label="Project Manager"
++              required
++              placeholder="e.g. Priya Venkatesh"
++              error={errors.projectManager?.message}
++              {...register('projectManager')}
++            />
++          </div>
++
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <DatePicker
++              label="Start Date"
++              required
++              error={errors.startDate?.message}
++              {...register('startDate')}
++            />
++            <DatePicker
++              label="Expected Delivery"
++              required
++              error={errors.expectedDelivery?.message}
++              {...register('expectedDelivery')}
++            />
++          </div>
++
++          <Controller
++            control={control}
++            name="status"
++            render={({ field }) => (
++              <Select
++                label="Status"
++                required
++                options={STATUS_OPTIONS}
++                value={field.value}
++                onValueChange={field.onChange}
++              />
++            )}
++          />
++        </ModalBody>
++        <ModalFooter>
++          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
++            Cancel
++          </Button>
++          <Button type="submit" isLoading={isSubmitting}>
++            {isEdit ? 'Save Changes' : 'Add Project'}
++          </Button>
++        </ModalFooter>
++      </form>
++    </Modal>
++  );
++}
+diff --git a/src/features/projects/hooks/useProjects.ts b/src/features/projects/hooks/useProjects.ts
+new file mode 100644
+index 0000000..5e5882a
+--- /dev/null
++++ b/src/features/projects/hooks/useProjects.ts
+@@ -0,0 +1,76 @@
++/**
++ * Purpose: Data-fetching/mutation hooks for the Projects module
++ * Responsibilities: Wrap projectService calls in useQuery/useMutation (caching, loading/error
++ *                    states, cache invalidation on write); also exposes useClientOptions for the
++ *                    Client picker in ProjectFormModal
++ * Dependencies: @tanstack/react-query, projectService, clientService, project.types
++ * Export: useProjects, useProject, useCreateProject, useUpdateProject, useDeleteProject,
++ *          useClientOptions
++ */
++import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
++import {
++  getProjects,
++  getProjectById,
++  createProject,
++  updateProject,
++  deleteProject,
++} from '../../../services/projectService';
++import { getAllClients } from '../../../services/clientService';
++import type { ProjectFormValues, ProjectListParams } from '../../../types/project.types';
++
++const PROJECTS_KEY = 'projects';
++
++export function useProjects(params: ProjectListParams) {
++  return useQuery({
++    queryKey: [PROJECTS_KEY, params],
++    queryFn: () => getProjects(params),
++    placeholderData: (prev) => prev,
++  });
++}
++
++export function useProject(id: string | undefined) {
++  return useQuery({
++    queryKey: [PROJECTS_KEY, 'detail', id],
++    queryFn: () => getProjectById(id as string),
++    enabled: !!id,
++  });
++}
++
++export function useCreateProject() {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: (values: ProjectFormValues) => createProject(values),
++    onSuccess: () => {
++      queryClient.invalidateQueries({ queryKey: [PROJECTS_KEY] });
++    },
++  });
++}
++
++export function useUpdateProject() {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: ({ id, values }: { id: string; values: ProjectFormValues }) => updateProject(id, values),
++    onSuccess: () => {
++      queryClient.invalidateQueries({ queryKey: [PROJECTS_KEY] });
++    },
++  });
++}
++
++export function useDeleteProject() {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: (id: string) => deleteProject(id),
++    onSuccess: () => {
++      queryClient.invalidateQueries({ queryKey: [PROJECTS_KEY] });
++    },
++  });
++}
++
++/** Client dropdown options for the project create/edit form */
++export function useClientOptions() {
++  return useQuery({
++    queryKey: ['clients', 'options'],
++    queryFn: getAllClients,
++    select: (clients) => clients.map((c) => ({ value: c.id, label: c.companyName })),
++  });
++}
+diff --git a/src/pages/projects/ProjectDetailPage.tsx b/src/pages/projects/ProjectDetailPage.tsx
+index 4447bbd..abd3b45 100644
+--- a/src/pages/projects/ProjectDetailPage.tsx
++++ b/src/pages/projects/ProjectDetailPage.tsx
+@@ -1,11 +1,185 @@
+ /**
+- * Purpose: Project Detail module landing page — stub pending module-by-module build
+- * Responsibilities: Render PlaceholderPage until this module is generated
+- * Dependencies: PlaceholderPage
++ * Purpose: Project Detail page — opened from ProjectsListPage row click/"View"
++ * Responsibilities: Show project header (name, client, status, edit action), the Financial
++ *                    Summary block (BRD: Project Value / Received Till Date / Current Payment /
++ *                    Outstanding Balance), and the Project View Tabs (Overview/Milestones/
++ *                    Invoices/Payments/Receipts/Files/Notes) — non-Overview tabs render a
++ *                    "coming soon" note until those modules are built, per the agreed build order.
++ * Dependencies: PageHeader (shared), Card, Tabs, StatusBadge, Button, Loader, ErrorState (ui),
++ *               useProject/useUpdateProject, ProjectFormModal
+  * Export: default
+  */
+-import { PlaceholderPage } from '../PlaceholderPage';
++import { useState } from 'react';
++import { useParams, useNavigate } from 'react-router-dom';
++import { ArrowLeft, Pencil, Construction } from 'lucide-react';
++import { PageHeader } from '../../components/shared/PageHeader';
++import { StatusBadge } from '../../components/shared/StatusBadge';
++import { Card, CardBody } from '../../components/ui/Card';
++import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
++import { Button } from '../../components/ui/Button';
++import { Loader } from '../../components/ui/Loader';
++import { ErrorState } from '../../components/ui/ErrorState';
++import { EmptyState } from '../../components/ui/EmptyState';
++import { formatCompactCurrency } from '../../utils/formatCurrency';
++import { ROUTES } from '../../routes/routePaths';
++import { useProject, useUpdateProject } from '../../features/projects/hooks/useProjects';
++import { ProjectFormModal } from '../../features/projects/components/ProjectFormModal';
++import { toast } from '../../components/ui/Toast';
++import type { ProjectFormValues } from '../../types/project.types';
+ 
+-export default function Page() {
+-  return <PlaceholderPage title="Project Detail" />;
++const FUTURE_TABS = [
++  { value: 'milestones', label: 'Milestones' },
++  { value: 'invoices', label: 'Invoices' },
++  { value: 'payments', label: 'Payments' },
++  { value: 'receipts', label: 'Receipts' },
++  { value: 'files', label: 'Files' },
++  { value: 'notes', label: 'Notes' },
++];
++
++export default function ProjectDetailPage() {
++  const { projectId } = useParams<{ projectId: string }>();
++  const navigate = useNavigate();
++  const [editOpen, setEditOpen] = useState(false);
++
++  const projectQuery = useProject(projectId);
++  const updateProject = useUpdateProject();
++
++  function handleEditSubmit(values: ProjectFormValues) {
++    if (!projectId) return;
++    updateProject.mutate(
++      { id: projectId, values },
++      {
++        onSuccess: () => {
++          toast.success(`${values.projectName} updated`);
++          setEditOpen(false);
++        },
++        onError: () => toast.error('Failed to update project'),
++      }
++    );
++  }
++
++  if (projectQuery.isLoading) {
++    return <Loader fullPage label="Loading project..." />;
++  }
++
++  if (projectQuery.isError || !projectQuery.data) {
++    return <ErrorState onRetry={() => projectQuery.refetch()} />;
++  }
++
++  const project = projectQuery.data;
++  const outstandingBalance = project.projectValue - project.receivedTillDate;
++
++  return (
++    <div className="space-y-6">
++      <PageHeader
++        title={project.projectName}
++        breadcrumbs={[{ label: 'Projects', href: ROUTES.PROJECTS }, { label: project.projectCode }]}
++        description={`${project.clientName} · ${project.projectManager}`}
++        action={
++          <div className="flex items-center gap-2">
++            <Button variant="secondary" leftIcon={<ArrowLeft className="h-4 w-4" />} onClick={() => navigate(ROUTES.PROJECTS)}>
++              Back
++            </Button>
++            <Button leftIcon={<Pencil className="h-4 w-4" />} onClick={() => setEditOpen(true)}>
++              Edit Project
++            </Button>
++          </div>
++        }
++      />
++
++      <div className="flex items-center gap-2">
++        <StatusBadge status={project.status} />
++        <span className="text-sm text-ink-500">
++          {project.startDate} → {project.expectedDelivery}
++        </span>
++      </div>
++
++      <Tabs defaultValue="overview">
++        <TabsList>
++          <TabsTrigger value="overview">Overview</TabsTrigger>
++          {FUTURE_TABS.map((tab) => (
++            <TabsTrigger key={tab.value} value={tab.value}>
++              {tab.label}
++            </TabsTrigger>
++          ))}
++        </TabsList>
++
++        <TabsContent value="overview">
++          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
++            <Card>
++              <CardBody>
++                <h3 className="mb-4 text-sm font-semibold text-ink-900">Financial Summary</h3>
++                <dl className="space-y-3">
++                  <div className="flex items-center justify-between">
++                    <dt className="text-sm text-ink-500">Project Value</dt>
++                    <dd className="text-sm font-semibold text-ink-900">
++                      {formatCompactCurrency(project.projectValue)}
++                    </dd>
++                  </div>
++                  <div className="flex items-center justify-between">
++                    <dt className="text-sm text-ink-500">Received Till Date</dt>
++                    <dd className="text-sm font-semibold text-success-700">
++                      {formatCompactCurrency(project.receivedTillDate)}
++                    </dd>
++                  </div>
++                  <div className="flex items-center justify-between">
++                    <dt className="text-sm text-ink-500">Current Payment</dt>
++                    <dd className="text-sm font-semibold text-ink-900">—</dd>
++                  </div>
++                  <div className="flex items-center justify-between border-t border-surface-border pt-3">
++                    <dt className="text-sm text-ink-500">Outstanding Balance</dt>
++                    <dd className="text-sm font-semibold text-danger-700">
++                      {formatCompactCurrency(outstandingBalance)}
++                    </dd>
++                  </div>
++                </dl>
++              </CardBody>
++            </Card>
++
++            <Card>
++              <CardBody>
++                <h3 className="mb-4 text-sm font-semibold text-ink-900">Project Details</h3>
++                <dl className="space-y-3 text-sm">
++                  <div className="flex items-center justify-between">
++                    <dt className="text-ink-500">Quotation No</dt>
++                    <dd className="font-medium text-ink-900">{project.quotationNo}</dd>
++                  </div>
++                  <div className="flex items-center justify-between">
++                    <dt className="text-ink-500">MSA No</dt>
++                    <dd className="font-medium text-ink-900">{project.msaNo}</dd>
++                  </div>
++                  <div className="flex items-center justify-between">
++                    <dt className="text-ink-500">Project Manager</dt>
++                    <dd className="font-medium text-ink-900">{project.projectManager}</dd>
++                  </div>
++                  <div className="flex items-center justify-between">
++                    <dt className="text-ink-500">Client</dt>
++                    <dd className="font-medium text-ink-900">{project.clientName}</dd>
++                  </div>
++                </dl>
++              </CardBody>
++            </Card>
++          </div>
++        </TabsContent>
++
++        {FUTURE_TABS.map((tab) => (
++          <TabsContent key={tab.value} value={tab.value}>
++            <EmptyState
++              icon={<Construction className="h-6 w-6" />}
++              title={`${tab.label} module is being built`}
++              description="This tab will be wired up once that module is generated, following the agreed build order."
++            />
++          </TabsContent>
++        ))}
++      </Tabs>
++
++      <ProjectFormModal
++        open={editOpen}
++        onOpenChange={setEditOpen}
++        project={project}
++        onSubmit={handleEditSubmit}
++        isSubmitting={updateProject.isPending}
++      />
++    </div>
++  );
+ }
+diff --git a/src/pages/projects/ProjectsListPage.tsx b/src/pages/projects/ProjectsListPage.tsx
+index 7730894..4056328 100644
+--- a/src/pages/projects/ProjectsListPage.tsx
++++ b/src/pages/projects/ProjectsListPage.tsx
+@@ -1,11 +1,269 @@
+ /**
+- * Purpose: Projects module landing page — stub pending module-by-module build
+- * Responsibilities: Render PlaceholderPage until this module is generated
+- * Dependencies: PlaceholderPage
++ * Purpose: Projects module landing page (BRD: Projects Module Fields + Add/Edit Project)
++ * Responsibilities: Compose PageHeader ("+ Add Project"), SearchBar, FilterBar (status/client),
++ *                    DataTable (sortable, paginated), row ActionMenu (View/Edit/Delete),
++ *                    ProjectFormModal (add/edit) — this page holds only UI/local state; all data
++ *                    access goes through the useProjects hooks. Row click / "View" navigates to
++ *                    the Project Detail page.
++ * Dependencies: PageHeader, SearchBar, FilterBar, StatusBadge, ExportButton (shared), DataTable,
++ *               Select, Pagination, Button (ui), ProjectFormModal (features), useProjects hooks
+  * Export: default
+  */
+-import { PlaceholderPage } from '../PlaceholderPage';
++import { useMemo, useState } from 'react';
++import { useNavigate } from 'react-router-dom';
++import type { ColumnDef, SortingState } from '@tanstack/react-table';
++import { Plus, Pencil, Eye, Trash2, Briefcase } from 'lucide-react';
++import { PageHeader } from '../../components/shared/PageHeader';
++import { SearchBar } from '../../components/shared/SearchBar';
++import { FilterBar } from '../../components/shared/FilterBar';
++import { ActionMenu } from '../../components/shared/ActionMenu';
++import { StatusBadge } from '../../components/shared/StatusBadge';
++import { ExportButton, type ExportFormat } from '../../components/shared/ExportButton';
++import { DataTable } from '../../components/ui/Table';
++import { Select } from '../../components/ui/Select';
++import { Pagination } from '../../components/ui/Pagination';
++import { Button } from '../../components/ui/Button';
++import { toast } from '../../components/ui/Toast';
++import { formatCompactCurrency } from '../../utils/formatCurrency';
++import { ROUTES } from '../../routes/routePaths';
++import {
++  useProjects,
++  useCreateProject,
++  useUpdateProject,
++  useDeleteProject,
++  useClientOptions,
++} from '../../features/projects/hooks/useProjects';
++import { ProjectFormModal } from '../../features/projects/components/ProjectFormModal';
++import type { Project, ProjectFormValues } from '../../types/project.types';
++import type { ProjectStatus } from '../../types/common.types';
+ 
+-export default function Page() {
+-  return <PlaceholderPage title="Projects" />;
++const PAGE_SIZE = 10;
++
++const STATUS_FILTER_OPTIONS = [
++  { value: 'Development', label: 'Development' },
++  { value: 'UAT', label: 'UAT' },
++  { value: 'Live', label: 'Live' },
++  { value: 'On Hold', label: 'On Hold' },
++  { value: 'Completed', label: 'Completed' },
++];
++
++export default function ProjectsListPage() {
++  const navigate = useNavigate();
++  const [page, setPage] = useState(1);
++  const [search, setSearch] = useState('');
++  const [status, setStatus] = useState<ProjectStatus | undefined>(undefined);
++  const [clientId, setClientId] = useState<string | undefined>(undefined);
++  const [sorting, setSorting] = useState<SortingState>([]);
++
++  const [formOpen, setFormOpen] = useState(false);
++  const [editingProject, setEditingProject] = useState<Project | undefined>(undefined);
++
++  const clientOptionsQuery = useClientOptions();
++
++  const queryParams = useMemo(
++    () => ({
++      page,
++      pageSize: PAGE_SIZE,
++      search: search || undefined,
++      status,
++      clientId,
++      sortBy: sorting[0]?.id,
++      sortDirection: (sorting[0] ? (sorting[0].desc ? 'desc' : 'asc') : undefined) as
++        | 'asc'
++        | 'desc'
++        | undefined,
++    }),
++    [page, search, status, clientId, sorting]
++  );
++
++  const projectsQuery = useProjects(queryParams);
++  const createProject = useCreateProject();
++  const updateProject = useUpdateProject();
++  const deleteProject = useDeleteProject();
++
++  function openAddModal() {
++    setEditingProject(undefined);
++    setFormOpen(true);
++  }
++
++  function openEditModal(project: Project) {
++    setEditingProject(project);
++    setFormOpen(true);
++  }
++
++  function openDetail(project: Project) {
++    navigate(ROUTES.PROJECT_DETAIL(project.id));
++  }
++
++  function handleFormSubmit(values: ProjectFormValues) {
++    if (editingProject) {
++      updateProject.mutate(
++        { id: editingProject.id, values },
++        {
++          onSuccess: () => {
++            toast.success(`${values.projectName} updated`);
++            setFormOpen(false);
++          },
++          onError: () => toast.error('Failed to update project'),
++        }
++      );
++    } else {
++      createProject.mutate(values, {
++        onSuccess: () => {
++          toast.success(`${values.projectName} added`);
++          setFormOpen(false);
++        },
++        onError: () => toast.error('Failed to add project'),
++      });
++    }
++  }
++
++  function handleDelete(project: Project) {
++    if (!window.confirm(`Delete ${project.projectName}? This cannot be undone.`)) return;
++    deleteProject.mutate(project.id, {
++      onSuccess: () => toast.success(`${project.projectName} deleted`),
++      onError: () => toast.error('Failed to delete project'),
++    });
++  }
++
++  function handleExport(format: ExportFormat) {
++    toast.info(`Exporting projects as ${format.toUpperCase()}...`);
++  }
++
++  const columns: ColumnDef<Project, any>[] = [
++    { accessorKey: 'projectCode', header: 'Project ID' },
++    { accessorKey: 'projectName', header: 'Project Name' },
++    { accessorKey: 'clientName', header: 'Client' },
++    { accessorKey: 'quotationNo', header: 'Quotation No' },
++    { accessorKey: 'msaNo', header: 'MSA No' },
++    {
++      accessorKey: 'projectValue',
++      header: 'Project Value',
++      cell: ({ getValue }) => formatCompactCurrency(getValue() as number),
++    },
++    { accessorKey: 'startDate', header: 'Start Date' },
++    { accessorKey: 'expectedDelivery', header: 'Expected Delivery' },
++    { accessorKey: 'projectManager', header: 'Project Manager' },
++    {
++      accessorKey: 'status',
++      header: 'Status',
++      cell: ({ getValue }) => <StatusBadge status={getValue() as string} />,
++    },
++    {
++      id: 'actions',
++      header: '',
++      cell: ({ row }) => (
++        <div onClick={(e) => e.stopPropagation()}>
++          <ActionMenu
++            items={[
++              { label: 'View', icon: <Eye className="h-4 w-4" />, onClick: () => openDetail(row.original) },
++              { label: 'Edit', icon: <Pencil className="h-4 w-4" />, onClick: () => openEditModal(row.original) },
++              {
++                label: 'Delete',
++                icon: <Trash2 className="h-4 w-4" />,
++                destructive: true,
++                separatorBefore: true,
++                onClick: () => handleDelete(row.original),
++              },
++            ]}
++          />
++        </div>
++      ),
++    },
++  ];
++
++  return (
++    <div className="space-y-6">
++      <PageHeader
++        title="Projects"
++        description="Every project Shine Craft is delivering, linked to its client and billing docs."
++        action={
++          <Button leftIcon={<Plus className="h-4 w-4" />} onClick={openAddModal}>
++            Add Project
++          </Button>
++        }
++      />
++
++      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
++        <div className="flex flex-1 items-center gap-3">
++          <SearchBar
++            placeholder="Search project, client, quotation, MSA..."
++            onSearch={(q) => {
++              setSearch(q);
++              setPage(1);
++            }}
++            className="max-w-sm"
++          />
++          <FilterBar
++            activeCount={(status ? 1 : 0) + (clientId ? 1 : 0)}
++            onClear={() => {
++              setStatus(undefined);
++              setClientId(undefined);
++            }}
++          >
++            <Select
++              label="Status"
++              placeholder="All statuses"
++              options={STATUS_FILTER_OPTIONS}
++              value={status}
++              onValueChange={(v) => {
++                setStatus(v as ProjectStatus);
++                setPage(1);
++              }}
++            />
++            <Select
++              label="Client"
++              placeholder="All clients"
++              options={clientOptionsQuery.data ?? []}
++              value={clientId}
++              onValueChange={(v) => {
++                setClientId(v);
++                setPage(1);
++              }}
++            />
++          </FilterBar>
++        </div>
++        <ExportButton onExport={handleExport} />
++      </div>
++
++      <DataTable
++        columns={columns}
++        data={projectsQuery.data?.data ?? []}
++        isLoading={projectsQuery.isLoading}
++        isError={projectsQuery.isError}
++        onRetry={() => projectsQuery.refetch()}
++        onRowClick={openDetail}
++        sorting={sorting}
++        onSortingChange={(next) => {
++          setSorting(next);
++          setPage(1);
++        }}
++        emptyTitle="No projects yet"
++        emptyDescription="Add your first project to start tracking milestones and invoices for it."
++        emptyAction={
++          <Button leftIcon={<Briefcase className="h-4 w-4" />} onClick={openAddModal}>
++            Add Project
++          </Button>
++        }
++      />
++
++      {projectsQuery.data && projectsQuery.data.totalEntries > 0 && (
++        <Pagination
++          currentPage={projectsQuery.data.page}
++          totalPages={projectsQuery.data.totalPages}
++          totalEntries={projectsQuery.data.totalEntries}
++          pageSize={projectsQuery.data.pageSize}
++          onPageChange={setPage}
++        />
++      )}
++
++      <ProjectFormModal
++        open={formOpen}
++        onOpenChange={setFormOpen}
++        project={editingProject}
++        onSubmit={handleFormSubmit}
++        isSubmitting={createProject.isPending || updateProject.isPending}
++      />
++    </div>
++  );
+ }
+diff --git a/src/services/clientService.ts b/src/services/clientService.ts
+index 9f8d522..f9ae7b1 100644
+--- a/src/services/clientService.ts
++++ b/src/services/clientService.ts
+@@ -145,6 +145,12 @@ export async function getClientById(id: string): Promise<Client | undefined> {
+   return delay(SEED_CLIENTS.find((c) => c.id === id));
+ }
+ 
++export async function getAllClients(): Promise<Client[]> {
++  // TODO: replace with `const { data } = await axiosClient.get<Client[]>('/clients/all'); return data;`
++  // Lightweight, unpaginated list used to populate Client pickers (e.g. Projects create/edit form)
++  return delay([...SEED_CLIENTS]);
++}
++
+ export async function createClient(values: ClientFormValues): Promise<Client> {
+   // TODO: replace with `const { data } = await axiosClient.post<Client>('/clients', values); return data;`
+   const client: Client = {
+diff --git a/src/services/projectService.ts b/src/services/projectService.ts
+new file mode 100644
+index 0000000..e65933e
+--- /dev/null
++++ b/src/services/projectService.ts
+@@ -0,0 +1,186 @@
++/**
++ * Purpose: Data access layer for the Projects module
++ * Responsibilities: Expose getProjects/getProjectById/createProject/updateProject/deleteProject as
++ *                    the only way features/projects reads or writes this data
++ * NOTE: No Projects API endpoint exists yet. Each function is wired to call axiosClient (see the
++ *       commented real call) but currently operates on an in-memory seed array so the UI is
++ *       reviewable end-to-end. Swap the TODO block for the real call once the backend is live.
++ * Dependencies: axiosClient, project.types, common.types, clientService (to denormalize clientName)
++ * Export: getProjects, getProjectById, createProject, updateProject, deleteProject
++ */
++import type { Project, ProjectFormValues, ProjectListParams } from '../types/project.types';
++import type { PaginatedResponse } from '../types/common.types';
++import { getClientById } from './clientService';
++
++let SEED_PROJECTS: Project[] = [
++  {
++    id: '1',
++    projectCode: 'PRJ-0001',
++    projectName: 'ERP Revamp — Phase 1',
++    clientId: '1',
++    clientName: 'Aravind Textiles Pvt Ltd',
++    quotationNo: 'QT-2025-011',
++    msaNo: 'MSA-2025-004',
++    projectValue: 850000,
++    startDate: '2025-02-01',
++    expectedDelivery: '2025-08-15',
++    status: 'Development',
++    projectManager: 'Priya Venkatesh',
++    receivedTillDate: 425000,
++  },
++  {
++    id: '2',
++    projectCode: 'PRJ-0002',
++    projectName: 'Patient Portal Redesign',
++    clientId: '2',
++    clientName: 'Nithya Health Solutions',
++    quotationNo: 'QT-2025-018',
++    msaNo: 'MSA-2025-007',
++    projectValue: 360000,
++    startDate: '2025-03-10',
++    expectedDelivery: '2025-06-30',
++    status: 'UAT',
++    projectManager: 'Karthik S',
++    receivedTillDate: 180000,
++  },
++  {
++    id: '3',
++    projectCode: 'PRJ-0003',
++    projectName: 'Fleet Tracking Dashboard',
++    clientId: '3',
++    clientName: 'Prime Logistics Corp',
++    quotationNo: 'QT-2024-092',
++    msaNo: 'MSA-2024-019',
++    projectValue: 210000,
++    startDate: '2024-10-05',
++    expectedDelivery: '2025-01-20',
++    status: 'On Hold',
++    projectManager: 'Priya Venkatesh',
++    receivedTillDate: 96000,
++  },
++  {
++    id: '4',
++    projectCode: 'PRJ-0004',
++    projectName: 'E-commerce Storefront',
++    clientId: '4',
++    clientName: 'BlueWave Retail',
++    quotationNo: 'QT-2025-002',
++    msaNo: 'MSA-2025-001',
++    projectValue: 980000,
++    startDate: '2025-01-15',
++    expectedDelivery: '2025-05-30',
++    status: 'Live',
++    projectManager: 'Ajith Kumar',
++    receivedTillDate: 640500,
++  },
++  {
++    id: '5',
++    projectCode: 'PRJ-0005',
++    projectName: 'Site Billing & Inventory Tool',
++    clientId: '5',
++    clientName: 'Karthik Constructions',
++    quotationNo: 'QT-2025-025',
++    msaNo: 'MSA-2025-010',
++    projectValue: 420000,
++    startDate: '2025-06-01',
++    expectedDelivery: '2025-09-15',
++    status: 'Development',
++    projectManager: 'Karthik S',
++    receivedTillDate: 210000,
++  },
++];
++
++let nextId = SEED_PROJECTS.length + 1;
++
++function delay<T>(value: T, ms = 350): Promise<T> {
++  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
++}
++
++function nextProjectCode(): string {
++  return `PRJ-${String(nextId).padStart(4, '0')}`;
++}
++
++export async function getProjects(params: ProjectListParams): Promise<PaginatedResponse<Project>> {
++  // TODO: replace with `const { data } = await axiosClient.get<PaginatedResponse<Project>>('/projects', { params }); return data;`
++  let rows = [...SEED_PROJECTS];
++
++  if (params.search) {
++    const q = params.search.toLowerCase();
++    rows = rows.filter(
++      (p) =>
++        p.projectName.toLowerCase().includes(q) ||
++        p.clientName.toLowerCase().includes(q) ||
++        p.projectCode.toLowerCase().includes(q) ||
++        p.quotationNo.toLowerCase().includes(q) ||
++        p.msaNo.toLowerCase().includes(q) ||
++        p.projectManager.toLowerCase().includes(q)
++    );
++  }
++
++  if (params.status) {
++    rows = rows.filter((p) => p.status === params.status);
++  }
++
++  if (params.clientId) {
++    rows = rows.filter((p) => p.clientId === params.clientId);
++  }
++
++  if (params.sortBy) {
++    const dir = params.sortDirection === 'desc' ? -1 : 1;
++    rows.sort((a, b) => {
++      const av = (a as unknown as Record<string, unknown>)[params.sortBy!];
++      const bv = (b as unknown as Record<string, unknown>)[params.sortBy!];
++      if (av == null || bv == null) return 0;
++      return av > bv ? dir : av < bv ? -dir : 0;
++    });
++  }
++
++  const totalEntries = rows.length;
++  const totalPages = Math.max(1, Math.ceil(totalEntries / params.pageSize));
++  const start = (params.page - 1) * params.pageSize;
++  const paged = rows.slice(start, start + params.pageSize);
++
++  return delay({
++    data: paged,
++    page: params.page,
++    pageSize: params.pageSize,
++    totalEntries,
++    totalPages,
++  });
++}
++
++export async function getProjectById(id: string): Promise<Project | undefined> {
++  // TODO: replace with `const { data } = await axiosClient.get<Project>(`/projects/${id}`); return data;`
++  return delay(SEED_PROJECTS.find((p) => p.id === id));
++}
++
++export async function createProject(values: ProjectFormValues): Promise<Project> {
++  // TODO: replace with `const { data } = await axiosClient.post<Project>('/projects', values); return data;`
++  const client = await getClientById(values.clientId);
++  const project: Project = {
++    id: String(nextId),
++    projectCode: nextProjectCode(),
++    ...values,
++    clientName: client?.companyName ?? 'Unknown Client',
++    receivedTillDate: 0,
++  };
++  nextId += 1;
++  SEED_PROJECTS = [project, ...SEED_PROJECTS];
++  return delay(project);
++}
++
++export async function updateProject(id: string, values: ProjectFormValues): Promise<Project> {
++  // TODO: replace with `const { data } = await axiosClient.put<Project>(`/projects/${id}`, values); return data;`
++  const client = await getClientById(values.clientId);
++  SEED_PROJECTS = SEED_PROJECTS.map((p) =>
++    p.id === id ? { ...p, ...values, clientName: client?.companyName ?? p.clientName } : p
++  );
++  const updated = SEED_PROJECTS.find((p) => p.id === id)!;
++  return delay(updated);
++}
++
++export async function deleteProject(id: string): Promise<void> {
++  // TODO: replace with `await axiosClient.delete(`/projects/${id}`);`
++  SEED_PROJECTS = SEED_PROJECTS.filter((p) => p.id !== id);
++  return delay(undefined);
++}
+diff --git a/src/types/project.types.ts b/src/types/project.types.ts
+new file mode 100644
+index 0000000..169d51e
+--- /dev/null
++++ b/src/types/project.types.ts
+@@ -0,0 +1,48 @@
++/**
++ * Purpose: TypeScript types for the Projects module (BRD: Projects Module Fields + Project View Tabs)
++ * Responsibilities: Single source of truth for the Project entity shape, create/update payloads,
++ *                    and list-query params — services/features/pages all import from here
++ * Dependencies: common.types (ProjectStatus, PaginatedResponse)
++ * Export: Project, ProjectFormValues, ProjectListParams
++ */
++import type { ProjectStatus } from './common.types';
++
++export interface Project {
++  id: string;
++  projectCode: string; // e.g. PRJ-0001 (BRD: Project ID)
++  projectName: string;
++  clientId: string;
++  clientName: string; // denormalized for table display
++  quotationNo: string;
++  msaNo: string;
++  projectValue: number;
++  startDate: string; // ISO date
++  expectedDelivery: string; // ISO date
++  status: ProjectStatus;
++  projectManager: string;
++  // Financial Summary (BRD: Milestones & Receipts doc — Project View > Overview)
++  receivedTillDate: number;
++}
++
++/** Shape used by the Add/Edit Project form (React Hook Form + Zod) */
++export interface ProjectFormValues {
++  projectName: string;
++  clientId: string;
++  quotationNo: string;
++  msaNo: string;
++  projectValue: number;
++  startDate: string;
++  expectedDelivery: string;
++  status: ProjectStatus;
++  projectManager: string;
++}
++
++export interface ProjectListParams {
++  page: number;
++  pageSize: number;
++  search?: string;
++  status?: ProjectStatus;
++  clientId?: string;
++  sortBy?: string;
++  sortDirection?: 'asc' | 'desc';
++}
+-- 
+2.43.0
+

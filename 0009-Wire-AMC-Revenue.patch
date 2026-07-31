@@ -1,0 +1,146 @@
+From 4afd1d6f9e6db4de948e34de729cc1429c73a121 Mon Sep 17 00:00:00 2001
+From: Claude <assistant@shinecraft.local>
+Date: Tue, 28 Jul 2026 04:52:28 +0000
+Subject: [PATCH 2/4] Wire AMC Revenue report to real AMC Contracts data
+
+---
+ src/pages/reports/ReportsHubPage.tsx | 24 +++++++++++++++----
+ src/services/reportService.ts        | 36 +++++++++++++++++++---------
+ src/types/report.types.ts            |  9 +++++++
+ 3 files changed, 53 insertions(+), 16 deletions(-)
+
+diff --git a/src/pages/reports/ReportsHubPage.tsx b/src/pages/reports/ReportsHubPage.tsx
+index f6d771a..5c879cb 100644
+--- a/src/pages/reports/ReportsHubPage.tsx
++++ b/src/pages/reports/ReportsHubPage.tsx
+@@ -12,11 +12,11 @@ import type { ColumnDef } from '@tanstack/react-table';
+ import { TrendingUp, PiggyBank, AlertTriangle } from 'lucide-react';
+ import { PageHeader } from '../../components/shared/PageHeader';
+ import { ExportButton, type ExportFormat } from '../../components/shared/ExportButton';
++import { StatusBadge } from '../../components/shared/StatusBadge';
+ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
+ import { Card, CardBody } from '../../components/ui/Card';
+ import { DataTable } from '../../components/ui/Table';
+ import { Loader } from '../../components/ui/Loader';
+-import { EmptyState } from '../../components/ui/EmptyState';
+ import { toast } from '../../components/ui/Toast';
+ import { formatCompactCurrency } from '../../utils/formatCurrency';
+ import {
+@@ -29,6 +29,7 @@ import {
+   useAmcRevenueReport,
+ } from '../../features/reports/hooks/useReports';
+ import type {
++  AmcRevenueRow,
+   ClientRevenueRow,
+   MonthlyCollectionRow,
+   OutstandingRow,
+@@ -218,12 +219,25 @@ function MonthlyCollectionsTab() {
+ }
+ 
+ function AmcRevenueTab() {
+-  useAmcRevenueReport();
++  const query = useAmcRevenueReport();
++  const columns: ColumnDef<AmcRevenueRow, any>[] = [
++    { accessorKey: 'amcNumber', header: 'AMC No' },
++    { accessorKey: 'clientName', header: 'Client' },
++    { accessorKey: 'projectName', header: 'Project' },
++    { accessorKey: 'contractValue', header: 'Contract Value', cell: ({ getValue }) => formatCompactCurrency(getValue()) },
++    { accessorKey: 'status', header: 'Status', cell: ({ getValue }) => <StatusBadge status={getValue() as string} /> },
++    { accessorKey: 'renewalDate', header: 'Renewal Date' },
++  ];
+   return (
+     <ReportSection title="AMC Revenue" onExport={() => handleExport('AMC Revenue', 'csv')}>
+-      <EmptyState
+-        title="AMC Contracts module not built yet"
+-        description="AMC Revenue will populate once the AMC Contracts module (a BRD Future Module) is built."
++      <DataTable
++        columns={columns}
++        data={query.data ?? []}
++        isLoading={query.isLoading}
++        isError={query.isError}
++        onRetry={() => query.refetch()}
++        emptyTitle="No AMC contracts yet"
++        emptyDescription="AMC Revenue will populate once contracts are added in AMC Contracts."
+       />
+     </ReportSection>
+   );
+diff --git a/src/services/reportService.ts b/src/services/reportService.ts
+index 1148d85..474c209 100644
+--- a/src/services/reportService.ts
++++ b/src/services/reportService.ts
+@@ -1,21 +1,22 @@
+ /**
+  * Purpose: Aggregation layer for the Reports module (BRD: Outstanding/Revenue/Client-wise/
+  *          Project-wise/AMC Revenue/Overdue Payments/Monthly Collections)
+- * Responsibilities: Derive every report live from Invoices + Payments so Reports always reflects
+- *                    the current state of those modules — no separate seed dataset to drift out
+- *                    of sync. AMC Revenue has no source module yet (AMC Contracts is a Future
+- *                    Module per BRD), so getAmcRevenue returns an empty result by design.
++ * Responsibilities: Derive every report live from Invoices + Payments (and AMC Contracts for AMC
++ *                    Revenue) so Reports always reflects the current state of those modules — no
++ *                    separate seed dataset to drift out of sync.
+  * NOTE: No Reports API endpoint exists yet. Each function is wired to call axiosClient (see the
+- *       commented real call) but currently computes from the in-memory Invoice/Payment seed data.
+- *       Swap the TODO block for the real call once the backend is live.
+- * Dependencies: invoiceService, paymentService, report.types
++ *       commented real call) but currently computes from the in-memory Invoice/Payment/AMC seed
++ *       data. Swap the TODO block for the real call once the backend is live.
++ * Dependencies: invoiceService, paymentService, amcService, report.types
+  * Export: getRevenueSummary, getOutstandingReport, getClientRevenueReport,
+  *          getProjectRevenueReport, getOverduePaymentsReport, getMonthlyCollectionsReport,
+  *          getAmcRevenueReport
+  */
+ import { getAllInvoices } from './invoiceService';
+ import { getAllPayments } from './paymentService';
++import { getAmcContracts } from './amcService';
+ import type {
++  AmcRevenueRow,
+   ClientRevenueRow,
+   MonthlyCollectionRow,
+   OutstandingRow,
+@@ -187,8 +188,21 @@ export async function getMonthlyCollectionsReport(): Promise<MonthlyCollectionRo
+   );
+ }
+ 
+-/** AMC Contracts is a BRD Future Module — no source data exists yet, so this is intentionally empty. */
+-export async function getAmcRevenueReport(): Promise<[]> {
+-  // TODO: replace with `const { data } = await axiosClient.get<AmcRevenueRow[]>('/reports/amc-revenue'); return data;` once AMC Contracts is built
+-  return delay([]);
++/** AMC Revenue — sourced from the AMC Contracts module now that it's built. */
++export async function getAmcRevenueReport(): Promise<AmcRevenueRow[]> {
++  // TODO: replace with `const { data } = await axiosClient.get<AmcRevenueRow[]>('/reports/amc-revenue'); return data;`
++  const { data: contracts } = await getAmcContracts({ page: 1, pageSize: 1000 });
++
++  return delay(
++    contracts
++      .map((c) => ({
++        amcNumber: c.amcNumber,
++        clientName: c.clientName,
++        projectName: c.projectName,
++        contractValue: c.contractValue,
++        status: c.status,
++        renewalDate: c.renewalDate,
++      }))
++      .sort((a, b) => b.contractValue - a.contractValue)
++  );
+ }
+diff --git a/src/types/report.types.ts b/src/types/report.types.ts
+index 38a463c..5398b82 100644
+--- a/src/types/report.types.ts
++++ b/src/types/report.types.ts
+@@ -55,3 +55,12 @@ export interface MonthlyCollectionRow {
+   monthLabel: string; // e.g. "May 2025"
+   collected: number;
+ }
++
++export interface AmcRevenueRow {
++  amcNumber: string;
++  clientName: string;
++  projectName: string;
++  contractValue: number;
++  status: string;
++  renewalDate: string;
++}
+-- 
+2.43.0
+

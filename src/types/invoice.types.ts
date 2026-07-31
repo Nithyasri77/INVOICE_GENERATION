@@ -9,6 +9,16 @@ import type { InvoiceStatus } from './common.types';
 
 export type BillingType = 'One-Time' | 'Milestone-Based' | 'Recurring' | 'Time & Material';
 
+/** A single line item on the invoice (BRD: Create Invoice popup — items table) */
+export interface InvoiceLineItem {
+  id: string;
+  description: string;
+  hsnSac: string;
+  qty: number;
+  rate: number;
+  amount: number; // qty * rate, kept denormalized so it never drifts while editing
+}
+
 export interface Invoice {
   id: string;
   invoiceNo: string; // e.g. INV-2025-001 (BRD: Invoice No)
@@ -17,11 +27,16 @@ export interface Invoice {
   clientName: string; // denormalized for table display
   serviceCategory: string;
   billingType: BillingType;
-  billingStage: string;
+  billingStage: string; // shown as "Milestone / Stage" on the Create Invoice popup
+  quotationNo: string;
   invoiceDate: string; // ISO date
   dueDate: string; // ISO date
-  amount: number;
-  gst: number; // GST amount (₹), stored separately from the base amount per BRD
+  items: InvoiceLineItem[];
+  amount: number; // Sub Total — sum of all line item amounts
+  cgst: number; // CGST amount (₹)
+  sgst: number; // SGST amount (₹)
+  gst: number; // Total GST = cgst + sgst — kept for backward compat with Reports/list totals
+  notes: string;
   status: InvoiceStatus;
 }
 
@@ -31,10 +46,15 @@ export interface InvoiceFormValues {
   serviceCategory: string;
   billingType: BillingType;
   billingStage: string;
+  quotationNo: string;
   invoiceDate: string;
   dueDate: string;
+  items: InvoiceLineItem[];
   amount: number;
+  cgst: number;
+  sgst: number;
   gst: number;
+  notes: string;
   status: InvoiceStatus;
 }
 

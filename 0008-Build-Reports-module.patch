@@ -1,0 +1,669 @@
+From 9fda3ec5bed72af22c1d5476147d727cdd5eb73e Mon Sep 17 00:00:00 2001
+From: Claude <assistant@shinecraft.local>
+Date: Tue, 28 Jul 2026 04:50:59 +0000
+Subject: [PATCH 1/4] Build Reports module (Outstanding, Revenue,
+ Client/Project-wise Revenue, AMC Revenue, Overdue Payments, Monthly
+ Collections)
+
+---
+ README.md                                |  13 +-
+ src/features/reports/hooks/useReports.ts |  49 ++++
+ src/pages/reports/ReportsHubPage.tsx     | 276 ++++++++++++++++++++++-
+ src/services/paymentService.ts           |   6 +
+ src/services/reportService.ts            | 194 ++++++++++++++++
+ src/types/report.types.ts                |  57 +++++
+ 6 files changed, 585 insertions(+), 10 deletions(-)
+ create mode 100644 src/features/reports/hooks/useReports.ts
+ create mode 100644 src/services/reportService.ts
+ create mode 100644 src/types/report.types.ts
+
+diff --git a/README.md b/README.md
+index 198a933..aec8b20 100644
+--- a/README.md
++++ b/README.md
+@@ -56,12 +56,17 @@ clearly marked with a TODO for when the real auth API is connected).
+   Payments Module Fields), Delete — seeded with sample data via `paymentService` (swap-in-ready
+   for the real API)
+ 
++- ✅ Reports — fully built: tabs for every BRD report (Outstanding, Revenue, Client-wise Revenue,
++  Project-wise Revenue, AMC Revenue, Overdue Payments, Monthly Collections), all derived live from
++  Invoices + Payments (no separate seed dataset, so it never drifts out of sync) via
++  `reportService`
++
+ ## What's still a placeholder
+ 
+-Every module except Dashboard, Clients, Projects, Milestones, Quotations, Invoices, and Payments
+-currently renders a "coming soon" placeholder page/tab (aside from anything the team has built
+-separately — check `git log` for the latest). These get built one at a time, in the order agreed:
+-Receipts → Reports → Settings, plus the additional nav items from your locked wireframe.
++Every module except Dashboard, Clients, Projects, Milestones, Quotations, Invoices, Payments, and
++Reports currently renders a "coming soon" placeholder page/tab (aside from anything the team has
++built separately — check `git log` for the latest). Next up: Expenses and Settings, plus anything
++else from your locked wireframe.
+ 
+ ## Tech Stack
+ 
+diff --git a/src/features/reports/hooks/useReports.ts b/src/features/reports/hooks/useReports.ts
+new file mode 100644
+index 0000000..e9d8921
+--- /dev/null
++++ b/src/features/reports/hooks/useReports.ts
+@@ -0,0 +1,49 @@
++/**
++ * Purpose: Data-fetching hooks for the Reports module
++ * Responsibilities: Wrap reportService's aggregation functions in useQuery (caching, loading/
++ *                    error states) — read only, reports have no create/update/delete
++ * Dependencies: @tanstack/react-query, reportService
++ * Export: useRevenueSummary, useOutstandingReport, useClientRevenueReport,
++ *          useProjectRevenueReport, useOverduePaymentsReport, useMonthlyCollectionsReport,
++ *          useAmcRevenueReport
++ */
++import { useQuery } from '@tanstack/react-query';
++import {
++  getRevenueSummary,
++  getOutstandingReport,
++  getClientRevenueReport,
++  getProjectRevenueReport,
++  getOverduePaymentsReport,
++  getMonthlyCollectionsReport,
++  getAmcRevenueReport,
++} from '../../../services/reportService';
++
++const REPORTS_KEY = 'reports';
++
++export function useRevenueSummary() {
++  return useQuery({ queryKey: [REPORTS_KEY, 'revenue-summary'], queryFn: getRevenueSummary });
++}
++
++export function useOutstandingReport() {
++  return useQuery({ queryKey: [REPORTS_KEY, 'outstanding'], queryFn: getOutstandingReport });
++}
++
++export function useClientRevenueReport() {
++  return useQuery({ queryKey: [REPORTS_KEY, 'client-revenue'], queryFn: getClientRevenueReport });
++}
++
++export function useProjectRevenueReport() {
++  return useQuery({ queryKey: [REPORTS_KEY, 'project-revenue'], queryFn: getProjectRevenueReport });
++}
++
++export function useOverduePaymentsReport() {
++  return useQuery({ queryKey: [REPORTS_KEY, 'overdue-payments'], queryFn: getOverduePaymentsReport });
++}
++
++export function useMonthlyCollectionsReport() {
++  return useQuery({ queryKey: [REPORTS_KEY, 'monthly-collections'], queryFn: getMonthlyCollectionsReport });
++}
++
++export function useAmcRevenueReport() {
++  return useQuery({ queryKey: [REPORTS_KEY, 'amc-revenue'], queryFn: getAmcRevenueReport });
++}
+diff --git a/src/pages/reports/ReportsHubPage.tsx b/src/pages/reports/ReportsHubPage.tsx
+index 79ce4fe..f6d771a 100644
+--- a/src/pages/reports/ReportsHubPage.tsx
++++ b/src/pages/reports/ReportsHubPage.tsx
+@@ -1,11 +1,275 @@
+ /**
+- * Purpose: Reports module landing page — stub pending module-by-module build
+- * Responsibilities: Render PlaceholderPage until this module is generated
+- * Dependencies: PlaceholderPage
++ * Purpose: Reports module landing page (BRD: Reports — Outstanding, Revenue, Client-wise Revenue,
++ *          Project-wise Revenue, AMC Revenue, Overdue Payments, Monthly Collections)
++ * Responsibilities: Tabs shell over read-only report tables, each backed by a useReports hook that
++ *                    aggregates live from Invoices + Payments. AMC Revenue shows an empty state
++ *                    since AMC Contracts (its source module) is a BRD Future Module not yet built.
++ * Dependencies: PageHeader (shared), Tabs, Card, DataTable, Loader, EmptyState, ExportButton (ui/shared),
++ *               useReports hooks
+  * Export: default
+  */
+-import { PlaceholderPage } from '../PlaceholderPage';
++import type { ColumnDef } from '@tanstack/react-table';
++import { TrendingUp, PiggyBank, AlertTriangle } from 'lucide-react';
++import { PageHeader } from '../../components/shared/PageHeader';
++import { ExportButton, type ExportFormat } from '../../components/shared/ExportButton';
++import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
++import { Card, CardBody } from '../../components/ui/Card';
++import { DataTable } from '../../components/ui/Table';
++import { Loader } from '../../components/ui/Loader';
++import { EmptyState } from '../../components/ui/EmptyState';
++import { toast } from '../../components/ui/Toast';
++import { formatCompactCurrency } from '../../utils/formatCurrency';
++import {
++  useRevenueSummary,
++  useOutstandingReport,
++  useClientRevenueReport,
++  useProjectRevenueReport,
++  useOverduePaymentsReport,
++  useMonthlyCollectionsReport,
++  useAmcRevenueReport,
++} from '../../features/reports/hooks/useReports';
++import type {
++  ClientRevenueRow,
++  MonthlyCollectionRow,
++  OutstandingRow,
++  OverdueRow,
++  ProjectRevenueRow,
++} from '../../types/report.types';
+ 
+-export default function Page() {
+-  return <PlaceholderPage title="Reports" />;
++function handleExport(reportName: string, format: ExportFormat) {
++  toast.info(`Exporting ${reportName} as ${format.toUpperCase()}...`);
++}
++
++function ReportSection({ title, onExport, children }: { title: string; onExport: () => void; children: React.ReactNode }) {
++  return (
++    <div className="space-y-4">
++      <div className="flex items-center justify-between">
++        <h3 className="text-sm font-semibold text-ink-900">{title}</h3>
++        <ExportButton onExport={() => onExport()} />
++      </div>
++      {children}
++    </div>
++  );
++}
++
++function RevenueTab() {
++  const summaryQuery = useRevenueSummary();
++
++  if (summaryQuery.isLoading || !summaryQuery.data) {
++    return <Loader label="Loading revenue summary..." />;
++  }
++
++  const { totalInvoiced, totalCollected, totalOutstanding, invoiceCount } = summaryQuery.data;
++
++  return (
++    <ReportSection title="Revenue Report" onExport={() => handleExport('Revenue Report', 'csv')}>
++      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
++        <Card>
++          <CardBody className="flex items-center gap-3">
++            <TrendingUp className="h-5 w-5 text-brand-600" />
++            <div>
++              <p className="text-xs font-medium uppercase tracking-wide text-ink-400">Total Invoiced</p>
++              <p className="text-lg font-semibold text-ink-900">{formatCompactCurrency(totalInvoiced)}</p>
++            </div>
++          </CardBody>
++        </Card>
++        <Card>
++          <CardBody className="flex items-center gap-3">
++            <PiggyBank className="h-5 w-5 text-success-700" />
++            <div>
++              <p className="text-xs font-medium uppercase tracking-wide text-ink-400">Total Collected</p>
++              <p className="text-lg font-semibold text-success-700">{formatCompactCurrency(totalCollected)}</p>
++            </div>
++          </CardBody>
++        </Card>
++        <Card>
++          <CardBody className="flex items-center gap-3">
++            <AlertTriangle className="h-5 w-5 text-danger-700" />
++            <div>
++              <p className="text-xs font-medium uppercase tracking-wide text-ink-400">Total Outstanding</p>
++              <p className="text-lg font-semibold text-danger-700">{formatCompactCurrency(totalOutstanding)}</p>
++            </div>
++          </CardBody>
++        </Card>
++      </div>
++      <p className="text-sm text-ink-500">Across {invoiceCount} invoices raised to date.</p>
++    </ReportSection>
++  );
++}
++
++function OutstandingTab() {
++  const query = useOutstandingReport();
++  const columns: ColumnDef<OutstandingRow, any>[] = [
++    { accessorKey: 'invoiceNo', header: 'Invoice No' },
++    { accessorKey: 'clientName', header: 'Client' },
++    { accessorKey: 'projectName', header: 'Project' },
++    { accessorKey: 'invoiceAmount', header: 'Invoice Amount', cell: ({ getValue }) => formatCompactCurrency(getValue()) },
++    { accessorKey: 'collected', header: 'Collected', cell: ({ getValue }) => formatCompactCurrency(getValue()) },
++    { accessorKey: 'outstanding', header: 'Outstanding', cell: ({ getValue }) => formatCompactCurrency(getValue()) },
++    { accessorKey: 'dueDate', header: 'Due Date' },
++  ];
++  return (
++    <ReportSection title="Outstanding Report" onExport={() => handleExport('Outstanding Report', 'csv')}>
++      <DataTable
++        columns={columns}
++        data={query.data ?? []}
++        isLoading={query.isLoading}
++        isError={query.isError}
++        onRetry={() => query.refetch()}
++        emptyTitle="Nothing outstanding"
++        emptyDescription="Every invoice has been fully collected."
++      />
++    </ReportSection>
++  );
++}
++
++function ClientRevenueTab() {
++  const query = useClientRevenueReport();
++  const columns: ColumnDef<ClientRevenueRow, any>[] = [
++    { accessorKey: 'clientName', header: 'Client' },
++    { accessorKey: 'projectCount', header: 'Projects' },
++    { accessorKey: 'invoiced', header: 'Invoiced', cell: ({ getValue }) => formatCompactCurrency(getValue()) },
++    { accessorKey: 'collected', header: 'Collected', cell: ({ getValue }) => formatCompactCurrency(getValue()) },
++    { accessorKey: 'outstanding', header: 'Outstanding', cell: ({ getValue }) => formatCompactCurrency(getValue()) },
++  ];
++  return (
++    <ReportSection title="Client-wise Revenue" onExport={() => handleExport('Client-wise Revenue', 'csv')}>
++      <DataTable
++        columns={columns}
++        data={query.data ?? []}
++        isLoading={query.isLoading}
++        isError={query.isError}
++        onRetry={() => query.refetch()}
++        emptyTitle="No revenue yet"
++        emptyDescription="Revenue by client will appear here once invoices are raised."
++      />
++    </ReportSection>
++  );
++}
++
++function ProjectRevenueTab() {
++  const query = useProjectRevenueReport();
++  const columns: ColumnDef<ProjectRevenueRow, any>[] = [
++    { accessorKey: 'projectName', header: 'Project' },
++    { accessorKey: 'clientName', header: 'Client' },
++    { accessorKey: 'invoiced', header: 'Invoiced', cell: ({ getValue }) => formatCompactCurrency(getValue()) },
++    { accessorKey: 'collected', header: 'Collected', cell: ({ getValue }) => formatCompactCurrency(getValue()) },
++    { accessorKey: 'outstanding', header: 'Outstanding', cell: ({ getValue }) => formatCompactCurrency(getValue()) },
++  ];
++  return (
++    <ReportSection title="Project-wise Revenue" onExport={() => handleExport('Project-wise Revenue', 'csv')}>
++      <DataTable
++        columns={columns}
++        data={query.data ?? []}
++        isLoading={query.isLoading}
++        isError={query.isError}
++        onRetry={() => query.refetch()}
++        emptyTitle="No revenue yet"
++        emptyDescription="Revenue by project will appear here once invoices are raised."
++      />
++    </ReportSection>
++  );
++}
++
++function OverduePaymentsTab() {
++  const query = useOverduePaymentsReport();
++  const columns: ColumnDef<OverdueRow, any>[] = [
++    { accessorKey: 'invoiceNo', header: 'Invoice No' },
++    { accessorKey: 'clientName', header: 'Client' },
++    { accessorKey: 'projectName', header: 'Project' },
++    { accessorKey: 'amountDue', header: 'Amount Due', cell: ({ getValue }) => formatCompactCurrency(getValue()) },
++    { accessorKey: 'dueDate', header: 'Due Date' },
++    { accessorKey: 'daysOverdue', header: 'Days Overdue' },
++  ];
++  return (
++    <ReportSection title="Overdue Payments" onExport={() => handleExport('Overdue Payments', 'csv')}>
++      <DataTable
++        columns={columns}
++        data={query.data ?? []}
++        isLoading={query.isLoading}
++        isError={query.isError}
++        onRetry={() => query.refetch()}
++        emptyTitle="Nothing overdue"
++        emptyDescription="No invoices are currently past their due date."
++      />
++    </ReportSection>
++  );
++}
++
++function MonthlyCollectionsTab() {
++  const query = useMonthlyCollectionsReport();
++  const columns: ColumnDef<MonthlyCollectionRow, any>[] = [
++    { accessorKey: 'monthLabel', header: 'Month' },
++    { accessorKey: 'collected', header: 'Collected', cell: ({ getValue }) => formatCompactCurrency(getValue()) },
++  ];
++  return (
++    <ReportSection title="Monthly Collections" onExport={() => handleExport('Monthly Collections', 'csv')}>
++      <DataTable
++        columns={columns}
++        data={query.data ?? []}
++        isLoading={query.isLoading}
++        isError={query.isError}
++        onRetry={() => query.refetch()}
++        emptyTitle="No collections yet"
++        emptyDescription="Monthly collection totals will appear here once payments are recorded."
++      />
++    </ReportSection>
++  );
++}
++
++function AmcRevenueTab() {
++  useAmcRevenueReport();
++  return (
++    <ReportSection title="AMC Revenue" onExport={() => handleExport('AMC Revenue', 'csv')}>
++      <EmptyState
++        title="AMC Contracts module not built yet"
++        description="AMC Revenue will populate once the AMC Contracts module (a BRD Future Module) is built."
++      />
++    </ReportSection>
++  );
++}
++
++export default function ReportsHubPage() {
++  return (
++    <div className="space-y-6">
++      <PageHeader
++        title="Reports"
++        description="Outstanding, revenue, and collection insights derived from your Invoices and Payments."
++      />
++
++      <Tabs defaultValue="outstanding">
++        <TabsList>
++          <TabsTrigger value="outstanding">Outstanding</TabsTrigger>
++          <TabsTrigger value="revenue">Revenue</TabsTrigger>
++          <TabsTrigger value="client-revenue">Client-wise Revenue</TabsTrigger>
++          <TabsTrigger value="project-revenue">Project-wise Revenue</TabsTrigger>
++          <TabsTrigger value="amc-revenue">AMC Revenue</TabsTrigger>
++          <TabsTrigger value="overdue">Overdue Payments</TabsTrigger>
++          <TabsTrigger value="monthly">Monthly Collections</TabsTrigger>
++        </TabsList>
++
++        <TabsContent value="outstanding">
++          <OutstandingTab />
++        </TabsContent>
++        <TabsContent value="revenue">
++          <RevenueTab />
++        </TabsContent>
++        <TabsContent value="client-revenue">
++          <ClientRevenueTab />
++        </TabsContent>
++        <TabsContent value="project-revenue">
++          <ProjectRevenueTab />
++        </TabsContent>
++        <TabsContent value="amc-revenue">
++          <AmcRevenueTab />
++        </TabsContent>
++        <TabsContent value="overdue">
++          <OverduePaymentsTab />
++        </TabsContent>
++        <TabsContent value="monthly">
++          <MonthlyCollectionsTab />
++        </TabsContent>
++      </Tabs>
++    </div>
++  );
+ }
+diff --git a/src/services/paymentService.ts b/src/services/paymentService.ts
+index e6c5237..016c540 100644
+--- a/src/services/paymentService.ts
++++ b/src/services/paymentService.ts
+@@ -151,6 +151,12 @@ export async function getPaymentById(id: string): Promise<Payment | undefined> {
+   return delay(SEED_PAYMENTS.find((r) => r.id === id));
+ }
+ 
++export async function getAllPayments(): Promise<Payment[]> {
++  // TODO: replace with `const { data } = await axiosClient.get<Payment[]>('/payments/all'); return data;`
++  // Lightweight, unpaginated list used by the Reports module to aggregate collections
++  return delay([...SEED_PAYMENTS]);
++}
++
+ export async function createPayment(values: PaymentFormValues): Promise<Payment> {
+   // TODO: replace with `const { data } = await axiosClient.post<Payment>('/payments', values); return data;`
+   // TODO(Receipts module): per BRD, saving a payment should auto-generate a receipt here.
+diff --git a/src/services/reportService.ts b/src/services/reportService.ts
+new file mode 100644
+index 0000000..1148d85
+--- /dev/null
++++ b/src/services/reportService.ts
+@@ -0,0 +1,194 @@
++/**
++ * Purpose: Aggregation layer for the Reports module (BRD: Outstanding/Revenue/Client-wise/
++ *          Project-wise/AMC Revenue/Overdue Payments/Monthly Collections)
++ * Responsibilities: Derive every report live from Invoices + Payments so Reports always reflects
++ *                    the current state of those modules — no separate seed dataset to drift out
++ *                    of sync. AMC Revenue has no source module yet (AMC Contracts is a Future
++ *                    Module per BRD), so getAmcRevenue returns an empty result by design.
++ * NOTE: No Reports API endpoint exists yet. Each function is wired to call axiosClient (see the
++ *       commented real call) but currently computes from the in-memory Invoice/Payment seed data.
++ *       Swap the TODO block for the real call once the backend is live.
++ * Dependencies: invoiceService, paymentService, report.types
++ * Export: getRevenueSummary, getOutstandingReport, getClientRevenueReport,
++ *          getProjectRevenueReport, getOverduePaymentsReport, getMonthlyCollectionsReport,
++ *          getAmcRevenueReport
++ */
++import { getAllInvoices } from './invoiceService';
++import { getAllPayments } from './paymentService';
++import type {
++  ClientRevenueRow,
++  MonthlyCollectionRow,
++  OutstandingRow,
++  OverdueRow,
++  ProjectRevenueRow,
++  RevenueSummary,
++} from '../types/report.types';
++
++function delay<T>(value: T, ms = 300): Promise<T> {
++  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
++}
++
++async function collectedByInvoiceId(): Promise<Map<string, number>> {
++  const payments = await getAllPayments();
++  const map = new Map<string, number>();
++  for (const p of payments) {
++    map.set(p.invoiceId, (map.get(p.invoiceId) ?? 0) + p.amount);
++  }
++  return map;
++}
++
++export async function getRevenueSummary(): Promise<RevenueSummary> {
++  // TODO: replace with `const { data } = await axiosClient.get<RevenueSummary>('/reports/revenue'); return data;`
++  const invoices = await getAllInvoices();
++  const collectedMap = await collectedByInvoiceId();
++
++  let totalInvoiced = 0;
++  let totalCollected = 0;
++  for (const inv of invoices) {
++    const invoiceTotal = inv.amount + inv.gst;
++    totalInvoiced += invoiceTotal;
++    totalCollected += collectedMap.get(inv.id) ?? 0;
++  }
++
++  return delay({
++    totalInvoiced,
++    totalCollected,
++    totalOutstanding: totalInvoiced - totalCollected,
++    invoiceCount: invoices.length,
++  });
++}
++
++export async function getOutstandingReport(): Promise<OutstandingRow[]> {
++  // TODO: replace with `const { data } = await axiosClient.get<OutstandingRow[]>('/reports/outstanding'); return data;`
++  const invoices = await getAllInvoices();
++  const collectedMap = await collectedByInvoiceId();
++
++  return delay(
++    invoices
++      .map((inv) => {
++        const invoiceAmount = inv.amount + inv.gst;
++        const collected = collectedMap.get(inv.id) ?? 0;
++        return {
++          invoiceNo: inv.invoiceNo,
++          projectName: inv.projectName,
++          clientName: inv.clientName,
++          invoiceAmount,
++          collected,
++          outstanding: invoiceAmount - collected,
++          dueDate: inv.dueDate,
++        };
++      })
++      .filter((row) => row.outstanding > 0)
++      .sort((a, b) => b.outstanding - a.outstanding)
++  );
++}
++
++export async function getClientRevenueReport(): Promise<ClientRevenueRow[]> {
++  // TODO: replace with `const { data } = await axiosClient.get<ClientRevenueRow[]>('/reports/client-revenue'); return data;`
++  const invoices = await getAllInvoices();
++  const collectedMap = await collectedByInvoiceId();
++
++  const byClient = new Map<string, { invoiced: number; collected: number; projects: Set<string> }>();
++  for (const inv of invoices) {
++    const entry = byClient.get(inv.clientName) ?? { invoiced: 0, collected: 0, projects: new Set<string>() };
++    entry.invoiced += inv.amount + inv.gst;
++    entry.collected += collectedMap.get(inv.id) ?? 0;
++    entry.projects.add(inv.projectId);
++    byClient.set(inv.clientName, entry);
++  }
++
++  return delay(
++    Array.from(byClient.entries())
++      .map(([clientName, v]) => ({
++        clientName,
++        invoiced: v.invoiced,
++        collected: v.collected,
++        outstanding: v.invoiced - v.collected,
++        projectCount: v.projects.size,
++      }))
++      .sort((a, b) => b.invoiced - a.invoiced)
++  );
++}
++
++export async function getProjectRevenueReport(): Promise<ProjectRevenueRow[]> {
++  // TODO: replace with `const { data } = await axiosClient.get<ProjectRevenueRow[]>('/reports/project-revenue'); return data;`
++  const invoices = await getAllInvoices();
++  const collectedMap = await collectedByInvoiceId();
++
++  const byProject = new Map<string, { projectName: string; clientName: string; invoiced: number; collected: number }>();
++  for (const inv of invoices) {
++    const entry = byProject.get(inv.projectId) ?? {
++      projectName: inv.projectName,
++      clientName: inv.clientName,
++      invoiced: 0,
++      collected: 0,
++    };
++    entry.invoiced += inv.amount + inv.gst;
++    entry.collected += collectedMap.get(inv.id) ?? 0;
++    byProject.set(inv.projectId, entry);
++  }
++
++  return delay(
++    Array.from(byProject.values())
++      .map((v) => ({ ...v, outstanding: v.invoiced - v.collected }))
++      .sort((a, b) => b.invoiced - a.invoiced)
++  );
++}
++
++export async function getOverduePaymentsReport(): Promise<OverdueRow[]> {
++  // TODO: replace with `const { data } = await axiosClient.get<OverdueRow[]>('/reports/overdue-payments'); return data;`
++  const invoices = await getAllInvoices();
++  const collectedMap = await collectedByInvoiceId();
++  const today = new Date();
++
++  return delay(
++    invoices
++      .filter((inv) => inv.status === 'Overdue')
++      .map((inv) => {
++        const invoiceAmount = inv.amount + inv.gst;
++        const collected = collectedMap.get(inv.id) ?? 0;
++        const daysOverdue = Math.max(
++          0,
++          Math.floor((today.getTime() - new Date(inv.dueDate).getTime()) / (1000 * 60 * 60 * 24))
++        );
++        return {
++          invoiceNo: inv.invoiceNo,
++          projectName: inv.projectName,
++          clientName: inv.clientName,
++          amountDue: invoiceAmount - collected,
++          dueDate: inv.dueDate,
++          daysOverdue,
++        };
++      })
++      .sort((a, b) => b.daysOverdue - a.daysOverdue)
++  );
++}
++
++export async function getMonthlyCollectionsReport(): Promise<MonthlyCollectionRow[]> {
++  // TODO: replace with `const { data } = await axiosClient.get<MonthlyCollectionRow[]>('/reports/monthly-collections'); return data;`
++  const payments = await getAllPayments();
++  const byMonth = new Map<string, number>();
++
++  for (const p of payments) {
++    const month = p.paymentDate.slice(0, 7); // "YYYY-MM"
++    byMonth.set(month, (byMonth.get(month) ?? 0) + p.amount);
++  }
++
++  const monthFormatter = new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric' });
++
++  return delay(
++    Array.from(byMonth.entries())
++      .map(([month, collected]) => ({
++        month,
++        monthLabel: monthFormatter.format(new Date(`${month}-01`)),
++        collected,
++      }))
++      .sort((a, b) => (a.month < b.month ? 1 : -1))
++  );
++}
++
++/** AMC Contracts is a BRD Future Module — no source data exists yet, so this is intentionally empty. */
++export async function getAmcRevenueReport(): Promise<[]> {
++  // TODO: replace with `const { data } = await axiosClient.get<AmcRevenueRow[]>('/reports/amc-revenue'); return data;` once AMC Contracts is built
++  return delay([]);
++}
+diff --git a/src/types/report.types.ts b/src/types/report.types.ts
+new file mode 100644
+index 0000000..38a463c
+--- /dev/null
++++ b/src/types/report.types.ts
+@@ -0,0 +1,57 @@
++/**
++ * Purpose: TypeScript types for the Reports module (BRD: Outstanding Report, Revenue Report,
++ *          Client-wise Revenue, Project-wise Revenue, AMC Revenue, Overdue Payments, Monthly
++ *          Collections). Reports are derived/aggregated views over Invoices + Payments — there is
++ *          no separate seed dataset; they reflect whatever is currently in those modules.
++ * Responsibilities: Row shapes returned by reportService's aggregation functions
++ * Dependencies: none
++ * Export: OutstandingRow, RevenueSummary, ClientRevenueRow, ProjectRevenueRow, OverdueRow,
++ *          MonthlyCollectionRow
++ */
++export interface OutstandingRow {
++  invoiceNo: string;
++  projectName: string;
++  clientName: string;
++  invoiceAmount: number; // amount + gst
++  collected: number;
++  outstanding: number;
++  dueDate: string;
++}
++
++export interface RevenueSummary {
++  totalInvoiced: number;
++  totalCollected: number;
++  totalOutstanding: number;
++  invoiceCount: number;
++}
++
++export interface ClientRevenueRow {
++  clientName: string;
++  invoiced: number;
++  collected: number;
++  outstanding: number;
++  projectCount: number;
++}
++
++export interface ProjectRevenueRow {
++  projectName: string;
++  clientName: string;
++  invoiced: number;
++  collected: number;
++  outstanding: number;
++}
++
++export interface OverdueRow {
++  invoiceNo: string;
++  projectName: string;
++  clientName: string;
++  amountDue: number;
++  dueDate: string;
++  daysOverdue: number;
++}
++
++export interface MonthlyCollectionRow {
++  month: string; // e.g. "2025-05"
++  monthLabel: string; // e.g. "May 2025"
++  collected: number;
++}
+-- 
+2.43.0
+

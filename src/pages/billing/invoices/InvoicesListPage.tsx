@@ -23,6 +23,7 @@ import { Pagination } from '../../../components/ui/Pagination';
 import { Button } from '../../../components/ui/Button';
 import { toast } from '../../../components/ui/Toast';
 import { formatCompactCurrency } from '../../../utils/formatCurrency';
+import { generateInvoicePDF } from '../../../utils/generateInvoicePdf';
 import {
   useInvoices,
   useCreateInvoice,
@@ -154,6 +155,14 @@ export default function InvoicesListPage() {
           <ActionMenu
             items={[
               { label: 'Edit', icon: <Pencil className="h-4 w-4" />, onClick: () => openEditModal(row.original) },
+              {
+                label: 'Download PDF',
+                icon: <Receipt className="h-4 w-4" />,
+                onClick: () => {
+                  generateInvoicePDF(row.original);
+                  toast.success(`Downloading ${row.original.invoiceNo}.pdf`);
+                },
+              },
               {
                 label: 'Delete',
                 icon: <Trash2 className="h-4 w-4" />,

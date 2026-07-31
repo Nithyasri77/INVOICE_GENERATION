@@ -26,6 +26,7 @@ import { Button } from '../../../components/ui/Button';
 import { toast } from '../../../components/ui/Toast';
 import { formatCompactCurrency } from '../../../utils/formatCurrency';
 import { formatDate } from '../../../utils/formatDate';
+import { generateReceiptPDF } from '../../../utils/generateReceiptPdf';
 import {
   useReceiptVouchers,
   useCreateReceiptVoucher,
@@ -170,6 +171,14 @@ export default function ReceiptVouchersListPage() {
           <ActionMenu
             items={[
               { label: 'Edit', icon: <Pencil className="h-4 w-4" />, onClick: () => openEditModal(row.original) },
+              {
+                label: 'Download PDF',
+                icon: <FileMinus className="h-4 w-4" />,
+                onClick: () => {
+                  generateReceiptPDF(row.original);
+                  toast.success(`Downloading ${row.original.receiptNo}.pdf`);
+                },
+              },
               {
                 label: 'Delete',
                 icon: <Trash2 className="h-4 w-4" />,

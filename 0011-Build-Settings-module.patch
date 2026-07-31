@@ -1,0 +1,824 @@
+From 8b5f38e93eada596bc527e2c72764025d70d95c6 Mon Sep 17 00:00:00 2001
+From: Claude <assistant@shinecraft.local>
+Date: Tue, 28 Jul 2026 05:00:21 +0000
+Subject: [PATCH 4/4] Build Settings module (Company Profile, GST, Bank, Number
+ Formats, Reminder Templates, Terms)
+
+---
+ README.md                                     |  13 ++-
+ src/components/ui/Textarea/Textarea.tsx       |  61 ++++++++++
+ src/components/ui/Textarea/index.ts           |   1 +
+ src/components/ui/index.ts                    |   1 +
+ .../settings/components/BankDetailsForm.tsx   |  52 +++++++++
+ .../components/CompanyProfileForm.tsx         |  49 ++++++++
+ .../settings/components/GstDetailsForm.tsx    |  47 ++++++++
+ .../settings/components/NumberFormatsForm.tsx |  76 ++++++++++++
+ .../components/ReminderTemplatesForm.tsx      |  48 ++++++++
+ .../components/TermsAndConditionsForm.tsx     |  45 ++++++++
+ src/features/settings/hooks/useSettings.ts    |  64 ++++++++++
+ src/pages/settings/SettingsPage.tsx           |  64 +++++++++-
+ src/services/settingsService.ts               | 109 ++++++++++++++++++
+ src/types/settings.types.ts                   |  58 ++++++++++
+ 14 files changed, 678 insertions(+), 10 deletions(-)
+ create mode 100644 src/components/ui/Textarea/Textarea.tsx
+ create mode 100644 src/components/ui/Textarea/index.ts
+ create mode 100644 src/features/settings/components/BankDetailsForm.tsx
+ create mode 100644 src/features/settings/components/CompanyProfileForm.tsx
+ create mode 100644 src/features/settings/components/GstDetailsForm.tsx
+ create mode 100644 src/features/settings/components/NumberFormatsForm.tsx
+ create mode 100644 src/features/settings/components/ReminderTemplatesForm.tsx
+ create mode 100644 src/features/settings/components/TermsAndConditionsForm.tsx
+ create mode 100644 src/features/settings/hooks/useSettings.ts
+ create mode 100644 src/services/settingsService.ts
+ create mode 100644 src/types/settings.types.ts
+
+diff --git a/README.md b/README.md
+index b3e659d..4257505 100644
+--- a/README.md
++++ b/README.md
+@@ -67,12 +67,17 @@ clearly marked with a TODO for when the real auth API is connected).
+   real API). Note: the BRD only names Expense Tracking as a Future Module without a field list,
+   so this follows standard project-expense tracking practice.
+ 
++- ✅ Settings — fully built: tabs for every BRD section (Company Profile, GST Details, Bank
++  Details, Invoice/Receipt Number Format, Reminder Templates, Terms & Conditions), each section
++  saves independently via its own mutation hook, seeded with sample data via `settingsService`
++  (swap-in-ready for the real API)
++
+ ## What's still a placeholder
+ 
+-Every module except Dashboard, Clients, Projects, Milestones, Quotations, Invoices, Payments,
+-Reports, and Expenses currently renders a "coming soon" placeholder page/tab (aside from anything
+-the team has built separately — check `git log` for the latest). Next up: Settings, plus anything
+-else from your locked wireframe.
++Aside from anything the team has built separately (check `git log` for the latest), every BRD
++MVP-screen module is now built: Dashboard, Clients, Projects, Milestones, Quotations, Invoices,
++Payments, Reports, Expenses, and Settings. Remaining work is whatever the team adds next from the
++locked wireframe or future BRD modules.
+ 
+ ## Tech Stack
+ 
+diff --git a/src/components/ui/Textarea/Textarea.tsx b/src/components/ui/Textarea/Textarea.tsx
+new file mode 100644
+index 0000000..b9fc5aa
+--- /dev/null
++++ b/src/components/ui/Textarea/Textarea.tsx
+@@ -0,0 +1,61 @@
++/**
++ * Purpose: App-wide multi-line text input — used directly or wrapped by React Hook Form's register
++ * Responsibilities: Render label, textarea, helper/error text consistently with Input
++ * Dependencies: cn()
++ * Export: Textarea
++ */
++import { forwardRef, type TextareaHTMLAttributes } from 'react';
++import { cn } from '../../../utils/cn';
++
++export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
++  label?: string;
++  error?: string;
++  helperText?: string;
++  required?: boolean;
++}
++
++export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
++  ({ className, label, error, helperText, required, id, rows = 4, ...props }, ref) => {
++    const textareaId = id ?? props.name;
++
++    return (
++      <div className="w-full">
++        {label && (
++          <label htmlFor={textareaId} className="mb-1.5 block text-sm font-medium text-ink-700">
++            {label}
++            {required && <span className="text-danger-600 ml-0.5">*</span>}
++          </label>
++        )}
++
++        <textarea
++          ref={ref}
++          id={textareaId}
++          rows={rows}
++          className={cn(
++            'w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-ink-900',
++            'placeholder:text-ink-400 transition-colors resize-y',
++            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:border-primary-500',
++            'disabled:bg-surface-bg disabled:text-ink-400 disabled:cursor-not-allowed',
++            error && 'border-danger-600 focus-visible:ring-danger-600',
++            className
++          )}
++          aria-invalid={!!error}
++          aria-describedby={error ? `${textareaId}-error` : helperText ? `${textareaId}-helper` : undefined}
++          {...props}
++        />
++
++        {error ? (
++          <p id={`${textareaId}-error`} className="mt-1.5 text-xs text-danger-600">
++            {error}
++          </p>
++        ) : helperText ? (
++          <p id={`${textareaId}-helper`} className="mt-1.5 text-xs text-ink-500">
++            {helperText}
++          </p>
++        ) : null}
++      </div>
++    );
++  }
++);
++
++Textarea.displayName = 'Textarea';
+diff --git a/src/components/ui/Textarea/index.ts b/src/components/ui/Textarea/index.ts
+new file mode 100644
+index 0000000..6449a41
+--- /dev/null
++++ b/src/components/ui/Textarea/index.ts
+@@ -0,0 +1 @@
++export * from './Textarea';
+diff --git a/src/components/ui/index.ts b/src/components/ui/index.ts
+index a2ecf28..8569a68 100644
+--- a/src/components/ui/index.ts
++++ b/src/components/ui/index.ts
+@@ -1,5 +1,6 @@
+ export * from './Button';
+ export * from './Input';
++export * from './Textarea';
+ export * from './Select';
+ export * from './DatePicker';
+ export * from './Badge';
+diff --git a/src/features/settings/components/BankDetailsForm.tsx b/src/features/settings/components/BankDetailsForm.tsx
+new file mode 100644
+index 0000000..f95dea3
+--- /dev/null
++++ b/src/features/settings/components/BankDetailsForm.tsx
+@@ -0,0 +1,52 @@
++/**
++ * Purpose: Bank Details settings form (BRD: Settings — Bank Details)
++ * Responsibilities: Edit + save bank account details shown on invoices, independently of other
++ *                    sections
++ * Dependencies: Input, Button (ui), react-hook-form, useSettings hooks
++ * Export: BankDetailsForm
++ */
++import { useEffect } from 'react';
++import { useForm } from 'react-hook-form';
++import { Input } from '../../../components/ui/Input';
++import { Button } from '../../../components/ui/Button';
++import { Card, CardBody } from '../../../components/ui/Card';
++import { toast } from '../../../components/ui/Toast';
++import { useUpdateBankDetails } from '../hooks/useSettings';
++import type { BankDetails } from '../../../types/settings.types';
++
++export function BankDetailsForm({ initialValues }: { initialValues: BankDetails }) {
++  const { register, handleSubmit, reset } = useForm<BankDetails>({ defaultValues: initialValues });
++  const updateBankDetails = useUpdateBankDetails();
++
++  useEffect(() => reset(initialValues), [initialValues, reset]);
++
++  function onSubmit(values: BankDetails) {
++    updateBankDetails.mutate(values, {
++      onSuccess: () => toast.success('Bank details updated'),
++      onError: () => toast.error('Failed to update bank details'),
++    });
++  }
++
++  return (
++    <Card>
++      <CardBody>
++        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input label="Bank Name" required {...register('bankName')} />
++            <Input label="Account Holder Name" required {...register('accountHolderName')} />
++          </div>
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input label="Account Number" required {...register('accountNumber')} />
++            <Input label="IFSC Code" required {...register('ifscCode')} />
++          </div>
++          <Input label="Branch" required {...register('branch')} />
++          <div className="flex justify-end">
++            <Button type="submit" isLoading={updateBankDetails.isPending}>
++              Save Bank Details
++            </Button>
++          </div>
++        </form>
++      </CardBody>
++    </Card>
++  );
++}
+diff --git a/src/features/settings/components/CompanyProfileForm.tsx b/src/features/settings/components/CompanyProfileForm.tsx
+new file mode 100644
+index 0000000..cf2c7bd
+--- /dev/null
++++ b/src/features/settings/components/CompanyProfileForm.tsx
+@@ -0,0 +1,49 @@
++/**
++ * Purpose: Company Profile settings form (BRD: Settings — Company Profile)
++ * Responsibilities: Edit + save company name/contact/address independently of other sections
++ * Dependencies: Input, Button (ui), react-hook-form, useSettings hooks
++ * Export: CompanyProfileForm
++ */
++import { useEffect } from 'react';
++import { useForm } from 'react-hook-form';
++import { Input } from '../../../components/ui/Input';
++import { Button } from '../../../components/ui/Button';
++import { Card, CardBody } from '../../../components/ui/Card';
++import { toast } from '../../../components/ui/Toast';
++import { useUpdateCompanyProfile } from '../hooks/useSettings';
++import type { CompanyProfile } from '../../../types/settings.types';
++
++export function CompanyProfileForm({ initialValues }: { initialValues: CompanyProfile }) {
++  const { register, handleSubmit, reset } = useForm<CompanyProfile>({ defaultValues: initialValues });
++  const updateCompanyProfile = useUpdateCompanyProfile();
++
++  useEffect(() => reset(initialValues), [initialValues, reset]);
++
++  function onSubmit(values: CompanyProfile) {
++    updateCompanyProfile.mutate(values, {
++      onSuccess: () => toast.success('Company profile updated'),
++      onError: () => toast.error('Failed to update company profile'),
++    });
++  }
++
++  return (
++    <Card>
++      <CardBody>
++        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
++          <Input label="Company Name" required {...register('companyName')} />
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input label="Contact Person" required {...register('contactPerson')} />
++            <Input label="Phone" required {...register('phone')} />
++          </div>
++          <Input label="Email" required type="email" {...register('email')} />
++          <Input label="Address" required {...register('address')} />
++          <div className="flex justify-end">
++            <Button type="submit" isLoading={updateCompanyProfile.isPending}>
++              Save Company Profile
++            </Button>
++          </div>
++        </form>
++      </CardBody>
++    </Card>
++  );
++}
+diff --git a/src/features/settings/components/GstDetailsForm.tsx b/src/features/settings/components/GstDetailsForm.tsx
+new file mode 100644
+index 0000000..fac5f7c
+--- /dev/null
++++ b/src/features/settings/components/GstDetailsForm.tsx
+@@ -0,0 +1,47 @@
++/**
++ * Purpose: GST Details settings form (BRD: Settings — GST Details)
++ * Responsibilities: Edit + save GSTIN/PAN/state code independently of other sections
++ * Dependencies: Input, Button (ui), react-hook-form, useSettings hooks
++ * Export: GstDetailsForm
++ */
++import { useEffect } from 'react';
++import { useForm } from 'react-hook-form';
++import { Input } from '../../../components/ui/Input';
++import { Button } from '../../../components/ui/Button';
++import { Card, CardBody } from '../../../components/ui/Card';
++import { toast } from '../../../components/ui/Toast';
++import { useUpdateGstDetails } from '../hooks/useSettings';
++import type { GstDetails } from '../../../types/settings.types';
++
++export function GstDetailsForm({ initialValues }: { initialValues: GstDetails }) {
++  const { register, handleSubmit, reset } = useForm<GstDetails>({ defaultValues: initialValues });
++  const updateGstDetails = useUpdateGstDetails();
++
++  useEffect(() => reset(initialValues), [initialValues, reset]);
++
++  function onSubmit(values: GstDetails) {
++    updateGstDetails.mutate(values, {
++      onSuccess: () => toast.success('GST details updated'),
++      onError: () => toast.error('Failed to update GST details'),
++    });
++  }
++
++  return (
++    <Card>
++      <CardBody>
++        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input label="GST Number" required {...register('gstNumber')} />
++            <Input label="PAN Number" required {...register('panNumber')} />
++          </div>
++          <Input label="State Code" required {...register('stateCode')} />
++          <div className="flex justify-end">
++            <Button type="submit" isLoading={updateGstDetails.isPending}>
++              Save GST Details
++            </Button>
++          </div>
++        </form>
++      </CardBody>
++    </Card>
++  );
++}
+diff --git a/src/features/settings/components/NumberFormatsForm.tsx b/src/features/settings/components/NumberFormatsForm.tsx
+new file mode 100644
+index 0000000..7cff512
+--- /dev/null
++++ b/src/features/settings/components/NumberFormatsForm.tsx
+@@ -0,0 +1,76 @@
++/**
++ * Purpose: Invoice Number Format + Receipt Number Format settings form (BRD: Settings)
++ * Responsibilities: Edit + save the numbering pattern and next sequence number for invoices and
++ *                    receipts, independently of other sections
++ * Dependencies: Input, Button (ui), react-hook-form, useSettings hooks
++ * Export: NumberFormatsForm
++ */
++import { useEffect } from 'react';
++import { useForm } from 'react-hook-form';
++import { Input } from '../../../components/ui/Input';
++import { Button } from '../../../components/ui/Button';
++import { Card, CardBody } from '../../../components/ui/Card';
++import { toast } from '../../../components/ui/Toast';
++import { useUpdateNumberFormats } from '../hooks/useSettings';
++import type { NumberFormatSettings } from '../../../types/settings.types';
++
++export function NumberFormatsForm({ initialValues }: { initialValues: NumberFormatSettings }) {
++  const { register, handleSubmit, reset } = useForm<NumberFormatSettings>({ defaultValues: initialValues });
++  const updateNumberFormats = useUpdateNumberFormats();
++
++  useEffect(() => reset(initialValues), [initialValues, reset]);
++
++  function onSubmit(values: NumberFormatSettings) {
++    updateNumberFormats.mutate(
++      { ...values, invoiceNumberNext: Number(values.invoiceNumberNext), receiptNumberNext: Number(values.receiptNumberNext) },
++      {
++        onSuccess: () => toast.success('Number formats updated'),
++        onError: () => toast.error('Failed to update number formats'),
++      }
++    );
++  }
++
++  return (
++    <Card>
++      <CardBody>
++        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input
++              label="Invoice Number Format"
++              required
++              helperText="Use {YYYY} for year and {SEQ} for the running sequence"
++              {...register('invoiceNumberFormat')}
++            />
++            <Input
++              label="Next Invoice Sequence"
++              required
++              type="number"
++              min={1}
++              {...register('invoiceNumberNext', { valueAsNumber: true })}
++            />
++          </div>
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input
++              label="Receipt Number Format"
++              required
++              helperText="Use {SEQ} for the running sequence"
++              {...register('receiptNumberFormat')}
++            />
++            <Input
++              label="Next Receipt Sequence"
++              required
++              type="number"
++              min={1}
++              {...register('receiptNumberNext', { valueAsNumber: true })}
++            />
++          </div>
++          <div className="flex justify-end">
++            <Button type="submit" isLoading={updateNumberFormats.isPending}>
++              Save Number Formats
++            </Button>
++          </div>
++        </form>
++      </CardBody>
++    </Card>
++  );
++}
+diff --git a/src/features/settings/components/ReminderTemplatesForm.tsx b/src/features/settings/components/ReminderTemplatesForm.tsx
+new file mode 100644
+index 0000000..03d56d3
+--- /dev/null
++++ b/src/features/settings/components/ReminderTemplatesForm.tsx
+@@ -0,0 +1,48 @@
++/**
++ * Purpose: Reminder Templates settings form (BRD: Settings — Reminder Templates)
++ * Responsibilities: Edit + save the first/second/final overdue-invoice reminder message
++ *                    templates, independently of other sections
++ * Dependencies: Textarea, Button (ui), react-hook-form, useSettings hooks
++ * Export: ReminderTemplatesForm
++ */
++import { useEffect } from 'react';
++import { useForm } from 'react-hook-form';
++import { Textarea } from '../../../components/ui/Textarea';
++import { Button } from '../../../components/ui/Button';
++import { Card, CardBody } from '../../../components/ui/Card';
++import { toast } from '../../../components/ui/Toast';
++import { useUpdateReminderTemplates } from '../hooks/useSettings';
++import type { ReminderTemplates } from '../../../types/settings.types';
++
++export function ReminderTemplatesForm({ initialValues }: { initialValues: ReminderTemplates }) {
++  const { register, handleSubmit, reset } = useForm<ReminderTemplates>({ defaultValues: initialValues });
++  const updateReminderTemplates = useUpdateReminderTemplates();
++
++  useEffect(() => reset(initialValues), [initialValues, reset]);
++
++  function onSubmit(values: ReminderTemplates) {
++    updateReminderTemplates.mutate(values, {
++      onSuccess: () => toast.success('Reminder templates updated'),
++      onError: () => toast.error('Failed to update reminder templates'),
++    });
++  }
++
++  const helper = 'Placeholders: {clientName}, {invoiceNo}, {amount}, {dueDate}';
++
++  return (
++    <Card>
++      <CardBody>
++        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
++          <Textarea label="First Reminder" required helperText={helper} {...register('firstReminder')} />
++          <Textarea label="Second Reminder" required helperText={helper} {...register('secondReminder')} />
++          <Textarea label="Final Reminder" required helperText={helper} {...register('finalReminder')} />
++          <div className="flex justify-end">
++            <Button type="submit" isLoading={updateReminderTemplates.isPending}>
++              Save Reminder Templates
++            </Button>
++          </div>
++        </form>
++      </CardBody>
++    </Card>
++  );
++}
+diff --git a/src/features/settings/components/TermsAndConditionsForm.tsx b/src/features/settings/components/TermsAndConditionsForm.tsx
+new file mode 100644
+index 0000000..efe446a
+--- /dev/null
++++ b/src/features/settings/components/TermsAndConditionsForm.tsx
+@@ -0,0 +1,45 @@
++/**
++ * Purpose: Terms & Conditions settings form (BRD: Settings — Terms & Conditions)
++ * Responsibilities: Edit + save the standard terms printed on invoices and quotations,
++ *                    independently of other sections
++ * Dependencies: Textarea, Button (ui), react-hook-form, useSettings hooks
++ * Export: TermsAndConditionsForm
++ */
++import { useEffect } from 'react';
++import { useForm } from 'react-hook-form';
++import { Textarea } from '../../../components/ui/Textarea';
++import { Button } from '../../../components/ui/Button';
++import { Card, CardBody } from '../../../components/ui/Card';
++import { toast } from '../../../components/ui/Toast';
++import { useUpdateTermsAndConditions } from '../hooks/useSettings';
++import type { TermsAndConditions } from '../../../types/settings.types';
++
++export function TermsAndConditionsForm({ initialValues }: { initialValues: TermsAndConditions }) {
++  const { register, handleSubmit, reset } = useForm<TermsAndConditions>({ defaultValues: initialValues });
++  const updateTerms = useUpdateTermsAndConditions();
++
++  useEffect(() => reset(initialValues), [initialValues, reset]);
++
++  function onSubmit(values: TermsAndConditions) {
++    updateTerms.mutate(values, {
++      onSuccess: () => toast.success('Terms & conditions updated'),
++      onError: () => toast.error('Failed to update terms & conditions'),
++    });
++  }
++
++  return (
++    <Card>
++      <CardBody>
++        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
++          <Textarea label="Invoice Terms" required rows={5} {...register('invoiceTerms')} />
++          <Textarea label="Quotation Terms" required rows={5} {...register('quotationTerms')} />
++          <div className="flex justify-end">
++            <Button type="submit" isLoading={updateTerms.isPending}>
++              Save Terms &amp; Conditions
++            </Button>
++          </div>
++        </form>
++      </CardBody>
++    </Card>
++  );
++}
+diff --git a/src/features/settings/hooks/useSettings.ts b/src/features/settings/hooks/useSettings.ts
+new file mode 100644
+index 0000000..ff9037e
+--- /dev/null
++++ b/src/features/settings/hooks/useSettings.ts
+@@ -0,0 +1,64 @@
++/**
++ * Purpose: Data-fetching/mutation hooks for the Settings module
++ * Responsibilities: Wrap settingsService calls in useQuery/useMutation — one mutation hook per
++ *                    section so each can be saved independently
++ * Dependencies: @tanstack/react-query, settingsService, settings.types
++ * Export: useSettings, useUpdateCompanyProfile, useUpdateGstDetails, useUpdateBankDetails,
++ *          useUpdateNumberFormats, useUpdateReminderTemplates, useUpdateTermsAndConditions
++ */
++import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
++import {
++  getSettings,
++  updateCompanyProfile,
++  updateGstDetails,
++  updateBankDetails,
++  updateNumberFormats,
++  updateReminderTemplates,
++  updateTermsAndConditions,
++} from '../../../services/settingsService';
++import type {
++  BankDetails,
++  CompanyProfile,
++  GstDetails,
++  NumberFormatSettings,
++  ReminderTemplates,
++  TermsAndConditions,
++} from '../../../types/settings.types';
++
++const SETTINGS_KEY = 'settings';
++
++export function useSettings() {
++  return useQuery({ queryKey: [SETTINGS_KEY], queryFn: getSettings });
++}
++
++function useSectionMutation<T>(mutationFn: (values: T) => Promise<T>) {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn,
++    onSuccess: () => queryClient.invalidateQueries({ queryKey: [SETTINGS_KEY] }),
++  });
++}
++
++export function useUpdateCompanyProfile() {
++  return useSectionMutation<CompanyProfile>(updateCompanyProfile);
++}
++
++export function useUpdateGstDetails() {
++  return useSectionMutation<GstDetails>(updateGstDetails);
++}
++
++export function useUpdateBankDetails() {
++  return useSectionMutation<BankDetails>(updateBankDetails);
++}
++
++export function useUpdateNumberFormats() {
++  return useSectionMutation<NumberFormatSettings>(updateNumberFormats);
++}
++
++export function useUpdateReminderTemplates() {
++  return useSectionMutation<ReminderTemplates>(updateReminderTemplates);
++}
++
++export function useUpdateTermsAndConditions() {
++  return useSectionMutation<TermsAndConditions>(updateTermsAndConditions);
++}
+diff --git a/src/pages/settings/SettingsPage.tsx b/src/pages/settings/SettingsPage.tsx
+index 1be0f6b..a647348 100644
+--- a/src/pages/settings/SettingsPage.tsx
++++ b/src/pages/settings/SettingsPage.tsx
+@@ -1,11 +1,63 @@
+ /**
+- * Purpose: Settings module landing page — stub pending module-by-module build
+- * Responsibilities: Render PlaceholderPage until this module is generated
+- * Dependencies: PlaceholderPage
++ * Purpose: Settings module landing page (BRD: Settings — Company Profile, GST Details, Bank
++ *          Details, Invoice Number Format, Receipt Number Format, Reminder Templates,
++ *          Terms & Conditions)
++ * Responsibilities: Tabs shell over each settings section's own form — every section saves
++ *                    independently via its own mutation hook, so editing one never risks another
++ * Dependencies: PageHeader (shared), Tabs (ui), Loader, useSettings, each section's Form component
+  * Export: default
+  */
+-import { PlaceholderPage } from '../PlaceholderPage';
++import { PageHeader } from '../../components/shared/PageHeader';
++import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
++import { Loader } from '../../components/ui/Loader';
++import { useSettings } from '../../features/settings/hooks/useSettings';
++import { CompanyProfileForm } from '../../features/settings/components/CompanyProfileForm';
++import { GstDetailsForm } from '../../features/settings/components/GstDetailsForm';
++import { BankDetailsForm } from '../../features/settings/components/BankDetailsForm';
++import { NumberFormatsForm } from '../../features/settings/components/NumberFormatsForm';
++import { ReminderTemplatesForm } from '../../features/settings/components/ReminderTemplatesForm';
++import { TermsAndConditionsForm } from '../../features/settings/components/TermsAndConditionsForm';
+ 
+-export default function Page() {
+-  return <PlaceholderPage title="Settings" />;
++export default function SettingsPage() {
++  const settingsQuery = useSettings();
++
++  return (
++    <div className="space-y-6">
++      <PageHeader title="Settings" description="Company details, GST, bank info, numbering, and templates used across billing." />
++
++      {settingsQuery.isLoading || !settingsQuery.data ? (
++        <Loader fullPage label="Loading settings..." />
++      ) : (
++        <Tabs defaultValue="company-profile">
++          <TabsList>
++            <TabsTrigger value="company-profile">Company Profile</TabsTrigger>
++            <TabsTrigger value="gst-details">GST Details</TabsTrigger>
++            <TabsTrigger value="bank-details">Bank Details</TabsTrigger>
++            <TabsTrigger value="number-formats">Number Formats</TabsTrigger>
++            <TabsTrigger value="reminder-templates">Reminder Templates</TabsTrigger>
++            <TabsTrigger value="terms">Terms & Conditions</TabsTrigger>
++          </TabsList>
++
++          <TabsContent value="company-profile">
++            <CompanyProfileForm initialValues={settingsQuery.data.companyProfile} />
++          </TabsContent>
++          <TabsContent value="gst-details">
++            <GstDetailsForm initialValues={settingsQuery.data.gstDetails} />
++          </TabsContent>
++          <TabsContent value="bank-details">
++            <BankDetailsForm initialValues={settingsQuery.data.bankDetails} />
++          </TabsContent>
++          <TabsContent value="number-formats">
++            <NumberFormatsForm initialValues={settingsQuery.data.numberFormats} />
++          </TabsContent>
++          <TabsContent value="reminder-templates">
++            <ReminderTemplatesForm initialValues={settingsQuery.data.reminderTemplates} />
++          </TabsContent>
++          <TabsContent value="terms">
++            <TermsAndConditionsForm initialValues={settingsQuery.data.termsAndConditions} />
++          </TabsContent>
++        </Tabs>
++      )}
++    </div>
++  );
+ }
+diff --git a/src/services/settingsService.ts b/src/services/settingsService.ts
+new file mode 100644
+index 0000000..a34b7cf
+--- /dev/null
++++ b/src/services/settingsService.ts
+@@ -0,0 +1,109 @@
++/**
++ * Purpose: Data access layer for the Settings module (BRD: Settings screen)
++ * Responsibilities: Expose getSettings and one update function per section (Company Profile, GST
++ *                    Details, Bank Details, Number Formats, Reminder Templates, Terms &
++ *                    Conditions) — settings is a single record, not a list, and each section saves
++ *                    independently so one section's edit doesn't block another's
++ * NOTE: No Settings API endpoint exists yet. Each function is wired to call axiosClient (see the
++ *       commented real call) but currently operates on an in-memory object so the UI is reviewable
++ *       end-to-end. Swap the TODO block for the real call once the backend is live.
++ * Dependencies: axiosClient, settings.types
++ * Export: getSettings, updateCompanyProfile, updateGstDetails, updateBankDetails,
++ *          updateNumberFormats, updateReminderTemplates, updateTermsAndConditions
++ */
++import type {
++  AppSettings,
++  BankDetails,
++  CompanyProfile,
++  GstDetails,
++  NumberFormatSettings,
++  ReminderTemplates,
++  TermsAndConditions,
++} from '../types/settings.types';
++
++let SETTINGS: AppSettings = {
++  companyProfile: {
++    companyName: 'Shine Craft Technologies',
++    contactPerson: 'Ajith Kumar',
++    phone: '+91 90000 12345',
++    email: 'hello@shinecrafttech.in',
++    address: 'No. 21, Anna Salai, Chennai, Tamil Nadu 600002',
++  },
++  gstDetails: {
++    gstNumber: '33AACST1234B1Z5',
++    panNumber: 'AACST1234B',
++    stateCode: '33 — Tamil Nadu',
++  },
++  bankDetails: {
++    bankName: 'HDFC Bank',
++    accountHolderName: 'Shine Craft Technologies',
++    accountNumber: '50100123456789',
++    ifscCode: 'HDFC0001234',
++    branch: 'T. Nagar, Chennai',
++  },
++  numberFormats: {
++    invoiceNumberFormat: 'INV-{YYYY}-{SEQ}',
++    invoiceNumberNext: 7,
++    receiptNumberFormat: 'RCT-{SEQ}',
++    receiptNumberNext: 6,
++  },
++  reminderTemplates: {
++    firstReminder:
++      'Hi {clientName}, this is a friendly reminder that invoice {invoiceNo} for {amount} is due on {dueDate}. Please let us know if you have any questions.',
++    secondReminder:
++      'Hi {clientName}, invoice {invoiceNo} for {amount} is now past due. Please arrange payment at the earliest to avoid any delay in ongoing work.',
++    finalReminder:
++      'Hi {clientName}, invoice {invoiceNo} for {amount} remains unpaid despite earlier reminders. Please settle this at the earliest to avoid escalation.',
++  },
++  termsAndConditions: {
++    invoiceTerms:
++      'Payment is due within the period specified on the invoice. Late payments may attract additional charges as per the signed MSA.',
++    quotationTerms:
++      'This quotation is valid until the date specified above. Prices are subject to change after expiry. GST will be charged as applicable.',
++  },
++};
++
++function delay<T>(value: T, ms = 300): Promise<T> {
++  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
++}
++
++export async function getSettings(): Promise<AppSettings> {
++  // TODO: replace with `const { data } = await axiosClient.get<AppSettings>('/settings'); return data;`
++  return delay({ ...SETTINGS });
++}
++
++export async function updateCompanyProfile(values: CompanyProfile): Promise<CompanyProfile> {
++  // TODO: replace with `const { data } = await axiosClient.put<CompanyProfile>('/settings/company-profile', values); return data;`
++  SETTINGS = { ...SETTINGS, companyProfile: values };
++  return delay(values);
++}
++
++export async function updateGstDetails(values: GstDetails): Promise<GstDetails> {
++  // TODO: replace with `const { data } = await axiosClient.put<GstDetails>('/settings/gst-details', values); return data;`
++  SETTINGS = { ...SETTINGS, gstDetails: values };
++  return delay(values);
++}
++
++export async function updateBankDetails(values: BankDetails): Promise<BankDetails> {
++  // TODO: replace with `const { data } = await axiosClient.put<BankDetails>('/settings/bank-details', values); return data;`
++  SETTINGS = { ...SETTINGS, bankDetails: values };
++  return delay(values);
++}
++
++export async function updateNumberFormats(values: NumberFormatSettings): Promise<NumberFormatSettings> {
++  // TODO: replace with `const { data } = await axiosClient.put<NumberFormatSettings>('/settings/number-formats', values); return data;`
++  SETTINGS = { ...SETTINGS, numberFormats: values };
++  return delay(values);
++}
++
++export async function updateReminderTemplates(values: ReminderTemplates): Promise<ReminderTemplates> {
++  // TODO: replace with `const { data } = await axiosClient.put<ReminderTemplates>('/settings/reminder-templates', values); return data;`
++  SETTINGS = { ...SETTINGS, reminderTemplates: values };
++  return delay(values);
++}
++
++export async function updateTermsAndConditions(values: TermsAndConditions): Promise<TermsAndConditions> {
++  // TODO: replace with `const { data } = await axiosClient.put<TermsAndConditions>('/settings/terms', values); return data;`
++  SETTINGS = { ...SETTINGS, termsAndConditions: values };
++  return delay(values);
++}
+diff --git a/src/types/settings.types.ts b/src/types/settings.types.ts
+new file mode 100644
+index 0000000..89b3330
+--- /dev/null
++++ b/src/types/settings.types.ts
+@@ -0,0 +1,58 @@
++/**
++ * Purpose: TypeScript types for the Settings module (BRD: Settings screen — Company Profile,
++ *          GST Details, Bank Details, Invoice Number Format, Receipt Number Format, Reminder
++ *          Templates, Terms & Conditions)
++ * Responsibilities: Single source of truth for each Settings section's shape. Settings is a
++ *                    single record (not a list) — sections are saved independently.
++ * Dependencies: none
++ * Export: CompanyProfile, GstDetails, BankDetails, NumberFormatSettings, ReminderTemplates,
++ *          TermsAndConditions, AppSettings
++ */
++export interface CompanyProfile {
++  companyName: string;
++  contactPerson: string;
++  phone: string;
++  email: string;
++  address: string;
++}
++
++export interface GstDetails {
++  gstNumber: string;
++  panNumber: string;
++  stateCode: string;
++}
++
++export interface BankDetails {
++  bankName: string;
++  accountHolderName: string;
++  accountNumber: string;
++  ifscCode: string;
++  branch: string;
++}
++
++export interface NumberFormatSettings {
++  invoiceNumberFormat: string; // e.g. "INV-{YYYY}-{SEQ}"
++  invoiceNumberNext: number;
++  receiptNumberFormat: string; // e.g. "RCT-{SEQ}"
++  receiptNumberNext: number;
++}
++
++export interface ReminderTemplates {
++  firstReminder: string;
++  secondReminder: string;
++  finalReminder: string;
++}
++
++export interface TermsAndConditions {
++  invoiceTerms: string;
++  quotationTerms: string;
++}
++
++export interface AppSettings {
++  companyProfile: CompanyProfile;
++  gstDetails: GstDetails;
++  bankDetails: BankDetails;
++  numberFormats: NumberFormatSettings;
++  reminderTemplates: ReminderTemplates;
++  termsAndConditions: TermsAndConditions;
++}
+-- 
+2.43.0
+

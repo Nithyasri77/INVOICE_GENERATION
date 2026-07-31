@@ -1,0 +1,787 @@
+From e40f8e335320cbc95bc1e397f9eb11c2fc01b140 Mon Sep 17 00:00:00 2001
+From: Claude <assistant@shinecraft.local>
+Date: Thu, 23 Jul 2026 07:02:27 +0000
+Subject: [PATCH] Build Milestones module (dashboard cards, timeline,
+ create/edit/delete) in Project Detail
+
+---
+ README.md                                     |  16 +-
+ .../components/MilestoneDashboardCards.tsx    |  35 ++++
+ .../components/MilestoneFormModal.tsx         | 161 +++++++++++++++
+ .../milestones/components/MilestonesTab.tsx   | 166 +++++++++++++++
+ .../milestones/hooks/useMilestones.ts         |  65 ++++++
+ src/pages/projects/ProjectDetailPage.tsx      |   7 +-
+ src/services/milestoneService.ts              | 193 ++++++++++++++++++
+ src/types/milestone.types.ts                  |  40 ++++
+ 8 files changed, 677 insertions(+), 6 deletions(-)
+ create mode 100644 src/features/milestones/components/MilestoneDashboardCards.tsx
+ create mode 100644 src/features/milestones/components/MilestoneFormModal.tsx
+ create mode 100644 src/features/milestones/components/MilestonesTab.tsx
+ create mode 100644 src/features/milestones/hooks/useMilestones.ts
+ create mode 100644 src/services/milestoneService.ts
+ create mode 100644 src/types/milestone.types.ts
+
+diff --git a/README.md b/README.md
+index d03a270..d1c48d1 100644
+--- a/README.md
++++ b/README.md
+@@ -33,13 +33,19 @@ clearly marked with a TODO for when the real auth API is connected).
+   full Project View Tabs shell (Milestones/Invoices/Payments/Receipts/Files/Notes render a
+   "coming soon" note until those modules are built)
+ 
++- ✅ Milestones — fully built as the Project Detail page's "Milestones" tab (per the locked
++  wireframe, Milestones is not a standalone sidebar menu — it's project-scoped): Milestone
++  Dashboard Cards (Total/Completed Value/Pending Value/Overdue), milestone timeline table
++  (Milestone ID/Name/Amount/Due Date/Linked Deliverable/Status), Create/Edit popup, Delete —
++  seeded with sample data via `milestoneService` (swap-in-ready for the real API)
++
+ ## What's still a placeholder
+ 
+-Every module except Dashboard, Clients, and Projects currently renders a "coming soon"
+-placeholder page (see `src/pages/PlaceholderPage.tsx`). These get built one at a time, in the
+-order agreed: Milestones → Quotations → Invoices → Payments → Receipts → Reports → Settings,
+-plus the additional nav items from your locked wireframe (Leads, Agreements, Credit/Debit Notes,
+-Statement of Account, AMC Contracts, Expenses).
++Every module except Dashboard, Clients, Projects, and Milestones currently renders a "coming
++soon" placeholder page/tab. These get built one at a time, in the order agreed: Quotations →
++Invoices → Payments → Receipts → Reports → Settings, plus the additional nav items from your
++locked wireframe (Leads, Agreements, Credit/Debit Notes, Statement of Account, AMC Contracts,
++Expenses).
+ 
+ ## Tech Stack
+ 
+diff --git a/src/features/milestones/components/MilestoneDashboardCards.tsx b/src/features/milestones/components/MilestoneDashboardCards.tsx
+new file mode 100644
+index 0000000..a3d576a
+--- /dev/null
++++ b/src/features/milestones/components/MilestoneDashboardCards.tsx
+@@ -0,0 +1,35 @@
++/**
++ * Purpose: Milestone Dashboard Cards (BRD: Total Milestones, Completed Value, Pending Value,
++ *          Overdue Milestones) shown atop the Milestones tab in Project Detail
++ * Responsibilities: Pure presentational grid of StatCards fed by useMilestoneStats
++ * Dependencies: StatCard (ui), formatCompactCurrency
++ * Export: MilestoneDashboardCards
++ */
++import { ListChecks, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
++import { StatCard } from '../../../components/ui/StatCard';
++import { formatCompactCurrency } from '../../../utils/formatCurrency';
++import type { MilestoneStats } from '../../../types/milestone.types';
++
++export function MilestoneDashboardCards({ stats }: { stats: MilestoneStats }) {
++  return (
++    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
++      <StatCard label="Total Milestones" value={String(stats.totalMilestones)} icon={<ListChecks className="h-4 w-4" />} />
++      <StatCard
++        label="Completed Value"
++        value={formatCompactCurrency(stats.completedValue)}
++        icon={<CheckCircle2 className="h-4 w-4" />}
++      />
++      <StatCard
++        label="Pending Value"
++        value={formatCompactCurrency(stats.pendingValue)}
++        icon={<Clock className="h-4 w-4" />}
++      />
++      <StatCard
++        label="Overdue Milestones"
++        value={String(stats.overdueMilestones)}
++        tone="danger"
++        icon={<AlertTriangle className="h-4 w-4" />}
++      />
++    </div>
++  );
++}
+diff --git a/src/features/milestones/components/MilestoneFormModal.tsx b/src/features/milestones/components/MilestoneFormModal.tsx
+new file mode 100644
+index 0000000..86f3d6e
+--- /dev/null
++++ b/src/features/milestones/components/MilestoneFormModal.tsx
+@@ -0,0 +1,161 @@
++/**
++ * Purpose: Create/Edit Milestone popup form (BRD: Create Milestone Popup Fields)
++ * Responsibilities: Validate + submit the Milestone form; used by the Project Detail page's
++ *                    Milestones tab for both "+ Add Milestone" (no initialValues) and row "Edit"
++ * Dependencies: Modal/ModalBody/ModalFooter, Input, Select, DatePicker, Button (ui),
++ *               react-hook-form, zod
++ * Export: MilestoneFormModal
++ */
++import { useEffect } from 'react';
++import { useForm, Controller } from 'react-hook-form';
++import { zodResolver } from '@hookform/resolvers/zod';
++import { z } from 'zod';
++import { Modal, ModalBody, ModalFooter } from '../../../components/ui/Modal';
++import { Input } from '../../../components/ui/Input';
++import { Select } from '../../../components/ui/Select';
++import { DatePicker } from '../../../components/ui/DatePicker';
++import { Button } from '../../../components/ui/Button';
++import type { Milestone, MilestoneFormValues } from '../../../types/milestone.types';
++
++const milestoneSchema = z.object({
++  milestoneName: z.string().min(2, 'Milestone name is required'),
++  description: z.string().min(1, 'Description is required'),
++  amount: z.number().positive('Enter a valid amount'),
++  dueDate: z.string().min(1, 'Due date is required'),
++  status: z.enum(['Not Started', 'In Progress', 'Invoice Raised', 'Paid', 'Completed']),
++  linkedDeliverable: z.string().min(1, 'Linked deliverable is required'),
++});
++
++export interface MilestoneFormModalProps {
++  open: boolean;
++  onOpenChange: (open: boolean) => void;
++  projectName: string;
++  milestone?: Milestone;
++  onSubmit: (values: MilestoneFormValues) => void;
++  isSubmitting?: boolean;
++}
++
++const STATUS_OPTIONS = [
++  { value: 'Not Started', label: 'Not Started' },
++  { value: 'In Progress', label: 'In Progress' },
++  { value: 'Invoice Raised', label: 'Invoice Raised' },
++  { value: 'Paid', label: 'Paid' },
++  { value: 'Completed', label: 'Completed' },
++];
++
++const EMPTY_VALUES: MilestoneFormValues = {
++  milestoneName: '',
++  description: '',
++  amount: 0,
++  dueDate: '',
++  status: 'Not Started',
++  linkedDeliverable: '',
++};
++
++export function MilestoneFormModal({
++  open,
++  onOpenChange,
++  projectName,
++  milestone,
++  onSubmit,
++  isSubmitting,
++}: MilestoneFormModalProps) {
++  const isEdit = !!milestone;
++
++  const {
++    register,
++    control,
++    handleSubmit,
++    reset,
++    formState: { errors },
++  } = useForm<MilestoneFormValues>({
++    resolver: zodResolver(milestoneSchema),
++    defaultValues: EMPTY_VALUES,
++  });
++
++  useEffect(() => {
++    if (open) {
++      reset(
++        milestone
++          ? {
++              milestoneName: milestone.milestoneName,
++              description: milestone.description,
++              amount: milestone.amount,
++              dueDate: milestone.dueDate,
++              status: milestone.status,
++              linkedDeliverable: milestone.linkedDeliverable,
++            }
++          : EMPTY_VALUES
++      );
++    }
++  }, [open, milestone, reset]);
++
++  return (
++    <Modal
++      open={open}
++      onOpenChange={onOpenChange}
++      title={isEdit ? 'Edit Milestone' : 'Create Milestone'}
++      description={`Project: ${projectName}`}
++      size="md"
++    >
++      <form onSubmit={handleSubmit(onSubmit)}>
++        <ModalBody className="space-y-4">
++          <Input
++            label="Milestone Name"
++            required
++            placeholder="e.g. UAT Sign-off"
++            error={errors.milestoneName?.message}
++            {...register('milestoneName')}
++          />
++          <Input
++            label="Description"
++            required
++            placeholder="What this milestone covers"
++            error={errors.description?.message}
++            {...register('description')}
++          />
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input
++              label="Amount (₹)"
++              required
++              type="number"
++              min={0}
++              placeholder="e.g. 170000"
++              error={errors.amount?.message}
++              {...register('amount', { valueAsNumber: true })}
++            />
++            <DatePicker label="Due Date" required error={errors.dueDate?.message} {...register('dueDate')} />
++          </div>
++          <Input
++            label="Linked Deliverable"
++            required
++            placeholder="e.g. UAT Sign-off Document"
++            error={errors.linkedDeliverable?.message}
++            {...register('linkedDeliverable')}
++          />
++          <Controller
++            control={control}
++            name="status"
++            render={({ field }) => (
++              <Select
++                label="Status"
++                required
++                options={STATUS_OPTIONS}
++                value={field.value}
++                onValueChange={field.onChange}
++              />
++            )}
++          />
++        </ModalBody>
++        <ModalFooter>
++          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
++            Cancel
++          </Button>
++          <Button type="submit" isLoading={isSubmitting}>
++            {isEdit ? 'Save Changes' : 'Create Milestone'}
++          </Button>
++        </ModalFooter>
++      </form>
++    </Modal>
++  );
++}
+diff --git a/src/features/milestones/components/MilestonesTab.tsx b/src/features/milestones/components/MilestonesTab.tsx
+new file mode 100644
+index 0000000..489ee12
+--- /dev/null
++++ b/src/features/milestones/components/MilestonesTab.tsx
+@@ -0,0 +1,166 @@
++/**
++ * Purpose: Full Milestones tab content, embedded inside ProjectDetailPage's "Milestones" tab
++ *          (BRD: Milestone Landing Screen + Dashboard Cards + Create Milestone Popup)
++ * Responsibilities: Compose MilestoneDashboardCards, a DataTable of this project's milestones
++ *                    (Milestone ID/Name/Amount/Due Date/Status), row actions (Edit/Delete), and
++ *                    the "+ Add Milestone" action wired to MilestoneFormModal — this component
++ *                    holds only UI/local state; all data access goes through useMilestones hooks.
++ * Dependencies: DataTable, Button, StatusBadge, ActionMenu, Loader, ErrorState, EmptyState,
++ *               MilestoneDashboardCards, MilestoneFormModal, useMilestones hooks
++ * Export: MilestonesTab
++ */
++import { useState } from 'react';
++import type { ColumnDef } from '@tanstack/react-table';
++import { Plus, Pencil, Trash2, Milestone as MilestoneIcon } from 'lucide-react';
++import { DataTable } from '../../../components/ui/Table';
++import { Button } from '../../../components/ui/Button';
++import { StatusBadge } from '../../../components/shared/StatusBadge';
++import { ActionMenu } from '../../../components/shared/ActionMenu';
++import { Loader } from '../../../components/ui/Loader';
++import { toast } from '../../../components/ui/Toast';
++import { formatCompactCurrency } from '../../../utils/formatCurrency';
++import { MilestoneDashboardCards } from './MilestoneDashboardCards';
++import { MilestoneFormModal } from './MilestoneFormModal';
++import {
++  useMilestones,
++  useMilestoneStats,
++  useCreateMilestone,
++  useUpdateMilestone,
++  useDeleteMilestone,
++} from '../hooks/useMilestones';
++import type { Milestone, MilestoneFormValues } from '../../../types/milestone.types';
++
++export interface MilestonesTabProps {
++  projectId: string;
++  projectName: string;
++}
++
++export function MilestonesTab({ projectId, projectName }: MilestonesTabProps) {
++  const [formOpen, setFormOpen] = useState(false);
++  const [editingMilestone, setEditingMilestone] = useState<Milestone | undefined>(undefined);
++
++  const milestonesQuery = useMilestones(projectId);
++  const statsQuery = useMilestoneStats(projectId);
++  const createMilestone = useCreateMilestone(projectId);
++  const updateMilestone = useUpdateMilestone(projectId);
++  const deleteMilestone = useDeleteMilestone(projectId);
++
++  function openAddModal() {
++    setEditingMilestone(undefined);
++    setFormOpen(true);
++  }
++
++  function openEditModal(milestone: Milestone) {
++    setEditingMilestone(milestone);
++    setFormOpen(true);
++  }
++
++  function handleFormSubmit(values: MilestoneFormValues) {
++    if (editingMilestone) {
++      updateMilestone.mutate(
++        { id: editingMilestone.id, values },
++        {
++          onSuccess: () => {
++            toast.success(`${values.milestoneName} updated`);
++            setFormOpen(false);
++          },
++          onError: () => toast.error('Failed to update milestone'),
++        }
++      );
++    } else {
++      createMilestone.mutate(values, {
++        onSuccess: () => {
++          toast.success(`${values.milestoneName} created`);
++          setFormOpen(false);
++        },
++        onError: () => toast.error('Failed to create milestone'),
++      });
++    }
++  }
++
++  function handleDelete(milestone: Milestone) {
++    if (!window.confirm(`Delete milestone "${milestone.milestoneName}"? This cannot be undone.`)) return;
++    deleteMilestone.mutate(milestone.id, {
++      onSuccess: () => toast.success(`${milestone.milestoneName} deleted`),
++      onError: () => toast.error('Failed to delete milestone'),
++    });
++  }
++
++  const columns: ColumnDef<Milestone, any>[] = [
++    { accessorKey: 'milestoneCode', header: 'Milestone ID' },
++    { accessorKey: 'milestoneName', header: 'Milestone Name' },
++    {
++      accessorKey: 'amount',
++      header: 'Amount',
++      cell: ({ getValue }) => formatCompactCurrency(getValue() as number),
++    },
++    { accessorKey: 'dueDate', header: 'Due Date' },
++    { accessorKey: 'linkedDeliverable', header: 'Linked Deliverable' },
++    {
++      accessorKey: 'status',
++      header: 'Status',
++      cell: ({ getValue }) => <StatusBadge status={getValue() as string} />,
++    },
++    {
++      id: 'actions',
++      header: '',
++      cell: ({ row }) => (
++        <div onClick={(e) => e.stopPropagation()}>
++          <ActionMenu
++            items={[
++              { label: 'Edit', icon: <Pencil className="h-4 w-4" />, onClick: () => openEditModal(row.original) },
++              {
++                label: 'Delete',
++                icon: <Trash2 className="h-4 w-4" />,
++                destructive: true,
++                separatorBefore: true,
++                onClick: () => handleDelete(row.original),
++              },
++            ]}
++          />
++        </div>
++      ),
++    },
++  ];
++
++  return (
++    <div className="space-y-4">
++      {statsQuery.isLoading || !statsQuery.data ? (
++        <Loader label="Loading milestone stats..." />
++      ) : (
++        <MilestoneDashboardCards stats={statsQuery.data} />
++      )}
++
++      <div className="flex items-center justify-between">
++        <h3 className="text-sm font-semibold text-ink-900">Milestone Timeline</h3>
++        <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={openAddModal}>
++          Add Milestone
++        </Button>
++      </div>
++
++      <DataTable
++        columns={columns}
++        data={milestonesQuery.data ?? []}
++        isLoading={milestonesQuery.isLoading}
++        isError={milestonesQuery.isError}
++        onRetry={() => milestonesQuery.refetch()}
++        emptyTitle="No milestones yet"
++        emptyDescription="Add payment-linked milestones to track this project's collection stages."
++        emptyAction={
++          <Button leftIcon={<MilestoneIcon className="h-4 w-4" />} onClick={openAddModal}>
++            Add Milestone
++          </Button>
++        }
++      />
++
++      <MilestoneFormModal
++        open={formOpen}
++        onOpenChange={setFormOpen}
++        projectName={projectName}
++        milestone={editingMilestone}
++        onSubmit={handleFormSubmit}
++        isSubmitting={createMilestone.isPending || updateMilestone.isPending}
++      />
++    </div>
++  );
++}
+diff --git a/src/features/milestones/hooks/useMilestones.ts b/src/features/milestones/hooks/useMilestones.ts
+new file mode 100644
+index 0000000..27688e0
+--- /dev/null
++++ b/src/features/milestones/hooks/useMilestones.ts
+@@ -0,0 +1,65 @@
++/**
++ * Purpose: Data-fetching/mutation hooks for the Milestones module (project-scoped)
++ * Responsibilities: Wrap milestoneService calls in useQuery/useMutation (caching, loading/error
++ *                    states, cache invalidation on write) — this is the only thing the
++ *                    Project Detail page's Milestones tab imports from the data layer
++ * Dependencies: @tanstack/react-query, milestoneService, milestone.types
++ * Export: useMilestones, useMilestoneStats, useCreateMilestone, useUpdateMilestone,
++ *          useDeleteMilestone
++ */
++import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
++import {
++  getMilestonesByProject,
++  getMilestoneStats,
++  createMilestone,
++  updateMilestone,
++  deleteMilestone,
++} from '../../../services/milestoneService';
++import type { MilestoneFormValues } from '../../../types/milestone.types';
++
++const MILESTONES_KEY = 'milestones';
++
++export function useMilestones(projectId: string | undefined) {
++  return useQuery({
++    queryKey: [MILESTONES_KEY, projectId],
++    queryFn: () => getMilestonesByProject(projectId as string),
++    enabled: !!projectId,
++  });
++}
++
++export function useMilestoneStats(projectId: string | undefined) {
++  return useQuery({
++    queryKey: [MILESTONES_KEY, 'stats', projectId],
++    queryFn: () => getMilestoneStats(projectId as string),
++    enabled: !!projectId,
++  });
++}
++
++function invalidateMilestones(queryClient: ReturnType<typeof useQueryClient>, projectId: string) {
++  queryClient.invalidateQueries({ queryKey: [MILESTONES_KEY, projectId] });
++  queryClient.invalidateQueries({ queryKey: [MILESTONES_KEY, 'stats', projectId] });
++}
++
++export function useCreateMilestone(projectId: string) {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: (values: MilestoneFormValues) => createMilestone(projectId, values),
++    onSuccess: () => invalidateMilestones(queryClient, projectId),
++  });
++}
++
++export function useUpdateMilestone(projectId: string) {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: ({ id, values }: { id: string; values: MilestoneFormValues }) => updateMilestone(id, values),
++    onSuccess: () => invalidateMilestones(queryClient, projectId),
++  });
++}
++
++export function useDeleteMilestone(projectId: string) {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: (id: string) => deleteMilestone(id),
++    onSuccess: () => invalidateMilestones(queryClient, projectId),
++  });
++}
+diff --git a/src/pages/projects/ProjectDetailPage.tsx b/src/pages/projects/ProjectDetailPage.tsx
+index abd3b45..d749719 100644
+--- a/src/pages/projects/ProjectDetailPage.tsx
++++ b/src/pages/projects/ProjectDetailPage.tsx
+@@ -24,11 +24,11 @@ import { formatCompactCurrency } from '../../utils/formatCurrency';
+ import { ROUTES } from '../../routes/routePaths';
+ import { useProject, useUpdateProject } from '../../features/projects/hooks/useProjects';
+ import { ProjectFormModal } from '../../features/projects/components/ProjectFormModal';
++import { MilestonesTab } from '../../features/milestones/components/MilestonesTab';
+ import { toast } from '../../components/ui/Toast';
+ import type { ProjectFormValues } from '../../types/project.types';
+ 
+ const FUTURE_TABS = [
+-  { value: 'milestones', label: 'Milestones' },
+   { value: 'invoices', label: 'Invoices' },
+   { value: 'payments', label: 'Payments' },
+   { value: 'receipts', label: 'Receipts' },
+@@ -97,6 +97,7 @@ export default function ProjectDetailPage() {
+       <Tabs defaultValue="overview">
+         <TabsList>
+           <TabsTrigger value="overview">Overview</TabsTrigger>
++          <TabsTrigger value="milestones">Milestones</TabsTrigger>
+           {FUTURE_TABS.map((tab) => (
+             <TabsTrigger key={tab.value} value={tab.value}>
+               {tab.label}
+@@ -162,6 +163,10 @@ export default function ProjectDetailPage() {
+           </div>
+         </TabsContent>
+ 
++        <TabsContent value="milestones">
++          <MilestonesTab projectId={project.id} projectName={project.projectName} />
++        </TabsContent>
++
+         {FUTURE_TABS.map((tab) => (
+           <TabsContent key={tab.value} value={tab.value}>
+             <EmptyState
+diff --git a/src/services/milestoneService.ts b/src/services/milestoneService.ts
+new file mode 100644
+index 0000000..05fa363
+--- /dev/null
++++ b/src/services/milestoneService.ts
+@@ -0,0 +1,193 @@
++/**
++ * Purpose: Data access layer for the Milestones module (project-scoped)
++ * Responsibilities: Expose getMilestonesByProject/createMilestone/updateMilestone/deleteMilestone/
++ *                    getMilestoneStats as the only way features/milestones reads or writes this
++ *                    data
++ * NOTE: No Milestones API endpoint exists yet. Each function is wired to call axiosClient (see
++ *       the commented real call) but currently operates on an in-memory seed array so the UI is
++ *       reviewable end-to-end. Swap the TODO block for the real call once the backend is live.
++ * Dependencies: axiosClient, milestone.types
++ * Export: getMilestonesByProject, createMilestone, updateMilestone, deleteMilestone,
++ *          getMilestoneStats
++ */
++import type { Milestone, MilestoneFormValues, MilestoneStats } from '../types/milestone.types';
++
++let SEED_MILESTONES: Milestone[] = [
++  // Project 1 — ERP Revamp Phase 1 (matches BRD's "Milestone Timeline Example")
++  {
++    id: '1',
++    milestoneCode: 'MS-0001',
++    projectId: '1',
++    milestoneName: 'Advance',
++    description: 'Advance payment on project kickoff',
++    amount: 170000,
++    dueDate: '2025-02-05',
++    status: 'Paid',
++    linkedDeliverable: 'Signed MSA + Kickoff Notes',
++  },
++  {
++    id: '2',
++    milestoneCode: 'MS-0002',
++    projectId: '1',
++    milestoneName: 'Development',
++    description: 'Core module development completed',
++    amount: 340000,
++    dueDate: '2025-05-15',
++    status: 'Paid',
++    linkedDeliverable: 'Staging Build v1',
++  },
++  {
++    id: '3',
++    milestoneCode: 'MS-0003',
++    projectId: '1',
++    milestoneName: 'UAT',
++    description: 'User acceptance testing sign-off',
++    amount: 170000,
++    dueDate: '2025-07-10',
++    status: 'In Progress',
++    linkedDeliverable: 'UAT Sign-off Document',
++  },
++  {
++    id: '4',
++    milestoneCode: 'MS-0004',
++    projectId: '1',
++    milestoneName: 'Go Live',
++    description: 'Production go-live and handover',
++    amount: 170000,
++    dueDate: '2025-08-15',
++    status: 'Not Started',
++    linkedDeliverable: 'Go-Live Checklist',
++  },
++  // Project 2 — Patient Portal Redesign
++  {
++    id: '5',
++    milestoneCode: 'MS-0005',
++    projectId: '2',
++    milestoneName: 'Advance',
++    description: 'Advance payment on project kickoff',
++    amount: 108000,
++    dueDate: '2025-03-15',
++    status: 'Paid',
++    linkedDeliverable: 'Signed MSA',
++  },
++  {
++    id: '6',
++    milestoneCode: 'MS-0006',
++    projectId: '2',
++    milestoneName: 'UI Design Sign-off',
++    description: 'Figma design approved by client',
++    amount: 72000,
++    dueDate: '2025-04-20',
++    status: 'Invoice Raised',
++    linkedDeliverable: 'Figma Design File',
++  },
++  {
++    id: '7',
++    milestoneCode: 'MS-0007',
++    projectId: '2',
++    milestoneName: 'Go Live',
++    description: 'Production go-live and handover',
++    amount: 180000,
++    dueDate: '2025-06-30',
++    status: 'Not Started',
++    linkedDeliverable: 'Go-Live Checklist',
++  },
++  // Project 4 — E-commerce Storefront
++  {
++    id: '8',
++    milestoneCode: 'MS-0008',
++    projectId: '4',
++    milestoneName: 'Advance',
++    description: 'Advance payment on project kickoff',
++    amount: 196000,
++    dueDate: '2025-01-20',
++    status: 'Paid',
++    linkedDeliverable: 'Signed MSA',
++  },
++  {
++    id: '9',
++    milestoneCode: 'MS-0009',
++    projectId: '4',
++    milestoneName: 'Checkout Module',
++    description: 'Payment gateway + checkout flow delivered',
++    amount: 294000,
++    dueDate: '2025-03-25',
++    status: 'Completed',
++    linkedDeliverable: 'Checkout Module Build',
++  },
++  {
++    id: '10',
++    milestoneCode: 'MS-0010',
++    projectId: '4',
++    milestoneName: 'Go Live',
++    description: 'Production go-live and handover',
++    amount: 490000,
++    dueDate: '2025-05-30',
++    status: 'Completed',
++    linkedDeliverable: 'Go-Live Checklist',
++  },
++];
++
++let nextId = SEED_MILESTONES.length + 1;
++
++function delay<T>(value: T, ms = 300): Promise<T> {
++  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
++}
++
++function nextMilestoneCode(): string {
++  return `MS-${String(nextId).padStart(4, '0')}`;
++}
++
++export async function getMilestonesByProject(projectId: string): Promise<Milestone[]> {
++  // TODO: replace with `const { data } = await axiosClient.get<Milestone[]>(`/projects/${projectId}/milestones`); return data;`
++  return delay(SEED_MILESTONES.filter((m) => m.projectId === projectId));
++}
++
++export async function getMilestoneStats(projectId: string): Promise<MilestoneStats> {
++  // TODO: replace with `const { data } = await axiosClient.get<MilestoneStats>(`/projects/${projectId}/milestones/stats`); return data;`
++  const rows = SEED_MILESTONES.filter((m) => m.projectId === projectId);
++  const today = new Date();
++
++  const completedValue = rows
++    .filter((m) => m.status === 'Paid' || m.status === 'Completed')
++    .reduce((sum, m) => sum + m.amount, 0);
++  const pendingValue = rows
++    .filter((m) => m.status !== 'Paid' && m.status !== 'Completed')
++    .reduce((sum, m) => sum + m.amount, 0);
++  const overdueMilestones = rows.filter(
++    (m) => m.status !== 'Paid' && m.status !== 'Completed' && new Date(m.dueDate) < today
++  ).length;
++
++  return delay({
++    totalMilestones: rows.length,
++    completedValue,
++    pendingValue,
++    overdueMilestones,
++  });
++}
++
++export async function createMilestone(projectId: string, values: MilestoneFormValues): Promise<Milestone> {
++  // TODO: replace with `const { data } = await axiosClient.post<Milestone>(`/projects/${projectId}/milestones`, values); return data;`
++  const milestone: Milestone = {
++    id: String(nextId),
++    milestoneCode: nextMilestoneCode(),
++    projectId,
++    ...values,
++  };
++  nextId += 1;
++  SEED_MILESTONES = [...SEED_MILESTONES, milestone];
++  return delay(milestone);
++}
++
++export async function updateMilestone(id: string, values: MilestoneFormValues): Promise<Milestone> {
++  // TODO: replace with `const { data } = await axiosClient.put<Milestone>(`/milestones/${id}`, values); return data;`
++  SEED_MILESTONES = SEED_MILESTONES.map((m) => (m.id === id ? { ...m, ...values } : m));
++  const updated = SEED_MILESTONES.find((m) => m.id === id)!;
++  return delay(updated);
++}
++
++export async function deleteMilestone(id: string): Promise<void> {
++  // TODO: replace with `await axiosClient.delete(`/milestones/${id}`);`
++  SEED_MILESTONES = SEED_MILESTONES.filter((m) => m.id !== id);
++  return delay(undefined);
++}
+diff --git a/src/types/milestone.types.ts b/src/types/milestone.types.ts
+new file mode 100644
+index 0000000..e6eb61c
+--- /dev/null
++++ b/src/types/milestone.types.ts
+@@ -0,0 +1,40 @@
++/**
++ * Purpose: TypeScript types for the Milestones module (BRD: Milestone Landing Screen fields +
++ *          Create Milestone Popup fields). Milestones are project-scoped and surface inside the
++ *          Project Detail page's "Milestones" tab.
++ * Responsibilities: Single source of truth for the Milestone entity shape, create/update
++ *                    payloads, and dashboard-card stats shape
++ * Dependencies: common.types (MilestoneStatus)
++ * Export: Milestone, MilestoneFormValues, MilestoneStats
++ */
++import type { MilestoneStatus } from './common.types';
++
++export interface Milestone {
++  id: string;
++  milestoneCode: string; // e.g. MS-0001 (BRD: Milestone ID)
++  projectId: string;
++  milestoneName: string;
++  description: string;
++  amount: number;
++  dueDate: string; // ISO date
++  status: MilestoneStatus;
++  linkedDeliverable: string;
++}
++
++/** Shape used by the Create/Edit Milestone popup (React Hook Form + Zod) */
++export interface MilestoneFormValues {
++  milestoneName: string;
++  description: string;
++  amount: number;
++  dueDate: string;
++  status: MilestoneStatus;
++  linkedDeliverable: string;
++}
++
++/** Milestone Dashboard Cards (BRD): Total Milestones, Completed Value, Pending Value, Overdue Milestones */
++export interface MilestoneStats {
++  totalMilestones: number;
++  completedValue: number;
++  pendingValue: number;
++  overdueMilestones: number;
++}
+-- 
+2.43.0
+

@@ -30,6 +30,7 @@ import type {
   CreateProjectNoteInput,
   UpdateProjectNoteInput,
 } from '../types/projectTabs.types';
+import { getProjectById } from './projectService';
 
 function simulateDelay<T>(data: T, ms = 250): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(data), ms));
@@ -369,8 +370,12 @@ export async function recordProjectPayment(input: RecordProjectPaymentInput): Pr
     INVOICES_STORE[invIdx] = { ...inv, paidAmount: newPaid, outstandingAmount: newOutstanding, status: newStatus };
   }
 
-  // Generate an automated receipt for this payment
+  // Generate an automated receipt for this payment (BRD Receipt Generation Rule:
+  // "Payment Saved -> Receipt Auto Generated"). Client name is resolved from the real
+  // project record rather than hardcoded, so the receipt matches whichever project/client
+  // the payment was actually recorded against.
   const receiptNum = RECEIPTS_STORE.length + 45;
+  const project = await getProjectById(input.projectId);
   RECEIPTS_STORE = [
     {
       id: `rcp_${Date.now()}`,
@@ -382,7 +387,7 @@ export async function recordProjectPayment(input: RecordProjectPaymentInput): Pr
       paymentMode: input.paymentMode,
       transactionId: input.referenceNumber,
       generatedDate: new Date().toISOString().slice(0, 10),
-      clientName: 'ABC Industries Pvt Ltd',
+      clientName: project?.clientName ?? 'Unknown Client',
     },
     ...RECEIPTS_STORE,
   ];

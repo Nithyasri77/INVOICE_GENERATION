@@ -6,15 +6,18 @@
  *       commented real call) but currently operates on an in-memory seed array so the UI is
  *       reviewable end-to-end. Swap the TODO block for the real call once the backend is live.
  *       Per BRD (Receipt Generation Rule: "Payment Saved -> Receipt Auto Generated"), createPayment
- *       is the hook point where the Receipts module will auto-generate a receipt once that module
- *       is built — left as a TODO below rather than guessed at now.
+ *       calls createReceiptVoucher immediately after saving so every payment always has a
+ *       matching Receipt Voucher — this is the single source of truth for that rule.
  * Dependencies: axiosClient, payment.types, common.types, invoiceService (to denormalize
- *               invoiceNo/projectName)
+ *               invoiceNo/projectName), projectService (to resolve clientId for the
+ *               auto-generated receipt), receiptVoucherService (Receipt Generation Rule)
  * Export: getPayments, getPaymentById, createPayment, updatePayment, deletePayment
  */
 import type { Payment, PaymentFormValues, PaymentListParams } from '../types/payment.types';
 import type { PaginatedResponse } from '../types/common.types';
 import { getInvoiceById } from './invoiceService';
+import { getProjectById } from './projectService';
+import { createReceiptVoucher } from './receiptVoucherService';
 
 let SEED_PAYMENTS: Payment[] = [
   {
@@ -159,7 +162,6 @@ export async function getAllPayments(): Promise<Payment[]> {
 
 export async function createPayment(values: PaymentFormValues): Promise<Payment> {
   // TODO: replace with `const { data } = await axiosClient.post<Payment>('/payments', values); return data;`
-  // TODO(Receipts module): per BRD, saving a payment should auto-generate a receipt here.
   const invoice = await getInvoiceById(values.invoiceId);
   const payment: Payment = {
     id: String(nextId),
@@ -171,6 +173,24 @@ export async function createPayment(values: PaymentFormValues): Promise<Payment>
   };
   nextId += 1;
   SEED_PAYMENTS = [payment, ...SEED_PAYMENTS];
+
+  // Receipt Generation Rule (BRD): "Payment Saved -> Receipt Auto Generated".
+  // Every payment recorded here must produce a matching Receipt Voucher — no manual step.
+  const project = invoice?.projectId ? await getProjectById(invoice.projectId) : undefined;
+  if (project) {
+    await createReceiptVoucher({
+      clientId: project.clientId,
+      projectId: project.id,
+      invoiceRef: payment.invoiceNo,
+      date: payment.paymentDate,
+      amount: payment.amount,
+      paymentMode: payment.mode,
+      referenceNo: payment.referenceNumber,
+      status: payment.status,
+      notes: `Auto-generated on payment ${payment.paymentCode}${payment.remarks ? ` — ${payment.remarks}` : ''}`,
+    });
+  }
+
   return delay(payment);
 }
 

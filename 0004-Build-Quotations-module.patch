@@ -1,0 +1,783 @@
+From 772d02fb93ccdb04cd2c409407ab82eac4fe9419 Mon Sep 17 00:00:00 2001
+From: Claude <assistant@shinecraft.local>
+Date: Thu, 23 Jul 2026 07:14:52 +0000
+Subject: [PATCH] Build Quotations module (list, add/edit, delete)
+
+---
+ README.md                                     |  11 +-
+ .../shared/StatusBadge/StatusBadge.tsx        |   3 +
+ .../components/QuotationFormModal.tsx         | 166 +++++++++++
+ .../quotations/hooks/useQuotations.ts         |  50 ++++
+ src/pages/quotations/QuotationsListPage.tsx   | 257 +++++++++++++++++-
+ src/services/quotationService.ts              | 163 +++++++++++
+ src/types/common.types.ts                     |   1 +
+ src/types/quotation.types.ts                  |  43 +++
+ 8 files changed, 686 insertions(+), 8 deletions(-)
+ create mode 100644 src/features/quotations/components/QuotationFormModal.tsx
+ create mode 100644 src/features/quotations/hooks/useQuotations.ts
+ create mode 100644 src/services/quotationService.ts
+ create mode 100644 src/types/quotation.types.ts
+
+diff --git a/README.md b/README.md
+index d1c48d1..5dc64c8 100644
+--- a/README.md
++++ b/README.md
+@@ -39,10 +39,17 @@ clearly marked with a TODO for when the real auth API is connected).
+   (Milestone ID/Name/Amount/Due Date/Linked Deliverable/Status), Create/Edit popup, Delete —
+   seeded with sample data via `milestoneService` (swap-in-ready for the real API)
+ 
++- ✅ Quotations — fully built: list (search/filter by status+client/sort/paginate), Add/Edit
++  modal (Client picker shared with Projects, amount, quotation/valid-until dates, status),
++  Delete — seeded with sample data via `quotationService` (swap-in-ready for the real API).
++  Note: the BRD didn't specify detailed Quotation fields, so this follows standard pre-sales
++  quotation practice (Quotation No, Client, Quotation Date, Valid Until, Amount, Status, Notes),
++  consistent with the "Quotation No" already referenced on the Projects module.
++
+ ## What's still a placeholder
+ 
+-Every module except Dashboard, Clients, Projects, and Milestones currently renders a "coming
+-soon" placeholder page/tab. These get built one at a time, in the order agreed: Quotations →
++Every module except Dashboard, Clients, Projects, Milestones, and Quotations currently renders a
++"coming soon" placeholder page/tab. These get built one at a time, in the order agreed:
+ Invoices → Payments → Receipts → Reports → Settings, plus the additional nav items from your
+ locked wireframe (Leads, Agreements, Credit/Debit Notes, Statement of Account, AMC Contracts,
+ Expenses).
+diff --git a/src/components/shared/StatusBadge/StatusBadge.tsx b/src/components/shared/StatusBadge/StatusBadge.tsx
+index bba04d8..58e7d66 100644
+--- a/src/components/shared/StatusBadge/StatusBadge.tsx
++++ b/src/components/shared/StatusBadge/StatusBadge.tsx
+@@ -36,6 +36,9 @@ const STATUS_COLOR_MAP: Record<string, StatusVariant> = {
+   // AMC
+   'Expiring Soon': 'warning',
+   Expired: 'danger',
++  // Quotation (Draft/Sent/Expired share colors with Invoice/AMC statuses above)
++  Accepted: 'success',
++  Rejected: 'danger',
+ };
+ 
+ export interface StatusBadgeProps {
+diff --git a/src/features/quotations/components/QuotationFormModal.tsx b/src/features/quotations/components/QuotationFormModal.tsx
+new file mode 100644
+index 0000000..9892ce3
+--- /dev/null
++++ b/src/features/quotations/components/QuotationFormModal.tsx
+@@ -0,0 +1,166 @@
++/**
++ * Purpose: Add/Edit Quotation popup form
++ * Responsibilities: Validate + submit the Quotation form; used by QuotationsListPage for both
++ *                    "+ Add Quotation" (no initialValues) and row "Edit" (initialValues supplied)
++ * Dependencies: Modal/ModalBody/ModalFooter, Input, Select, DatePicker, Button (ui),
++ *               react-hook-form, zod, useClientOptions (Projects feature — shared Client picker)
++ * Export: QuotationFormModal
++ */
++import { useEffect } from 'react';
++import { useForm, Controller } from 'react-hook-form';
++import { zodResolver } from '@hookform/resolvers/zod';
++import { z } from 'zod';
++import { Modal, ModalBody, ModalFooter } from '../../../components/ui/Modal';
++import { Input } from '../../../components/ui/Input';
++import { Select } from '../../../components/ui/Select';
++import { DatePicker } from '../../../components/ui/DatePicker';
++import { Button } from '../../../components/ui/Button';
++import { useClientOptions } from '../../projects/hooks/useProjects';
++import type { Quotation, QuotationFormValues } from '../../../types/quotation.types';
++
++const quotationSchema = z
++  .object({
++    clientId: z.string().min(1, 'Select a client'),
++    quotationDate: z.string().min(1, 'Quotation date is required'),
++    validUntil: z.string().min(1, 'Valid until date is required'),
++    amount: z.number().positive('Enter a valid amount'),
++    status: z.enum(['Draft', 'Sent', 'Accepted', 'Rejected', 'Expired']),
++    notes: z.string(),
++  })
++  .refine((data) => new Date(data.validUntil) >= new Date(data.quotationDate), {
++    message: 'Valid until must be on or after the quotation date',
++    path: ['validUntil'],
++  });
++
++export interface QuotationFormModalProps {
++  open: boolean;
++  onOpenChange: (open: boolean) => void;
++  quotation?: Quotation;
++  onSubmit: (values: QuotationFormValues) => void;
++  isSubmitting?: boolean;
++}
++
++const STATUS_OPTIONS = [
++  { value: 'Draft', label: 'Draft' },
++  { value: 'Sent', label: 'Sent' },
++  { value: 'Accepted', label: 'Accepted' },
++  { value: 'Rejected', label: 'Rejected' },
++  { value: 'Expired', label: 'Expired' },
++];
++
++const EMPTY_VALUES: QuotationFormValues = {
++  clientId: '',
++  quotationDate: '',
++  validUntil: '',
++  amount: 0,
++  status: 'Draft',
++  notes: '',
++};
++
++export function QuotationFormModal({ open, onOpenChange, quotation, onSubmit, isSubmitting }: QuotationFormModalProps) {
++  const isEdit = !!quotation;
++  const clientOptionsQuery = useClientOptions();
++
++  const {
++    register,
++    control,
++    handleSubmit,
++    reset,
++    formState: { errors },
++  } = useForm<QuotationFormValues>({
++    resolver: zodResolver(quotationSchema),
++    defaultValues: EMPTY_VALUES,
++  });
++
++  useEffect(() => {
++    if (open) {
++      reset(
++        quotation
++          ? {
++              clientId: quotation.clientId,
++              quotationDate: quotation.quotationDate,
++              validUntil: quotation.validUntil,
++              amount: quotation.amount,
++              status: quotation.status,
++              notes: quotation.notes,
++            }
++          : EMPTY_VALUES
++      );
++    }
++  }, [open, quotation, reset]);
++
++  return (
++    <Modal
++      open={open}
++      onOpenChange={onOpenChange}
++      title={isEdit ? 'Edit Quotation' : 'Add Quotation'}
++      description={isEdit ? "Update this quotation's details." : 'Create a new quotation for a client.'}
++      size="md"
++    >
++      <form onSubmit={handleSubmit(onSubmit)}>
++        <ModalBody className="space-y-4">
++          <Controller
++            control={control}
++            name="clientId"
++            render={({ field }) => (
++              <Select
++                label="Client"
++                required
++                placeholder="Select a client"
++                options={clientOptionsQuery.data ?? []}
++                value={field.value}
++                onValueChange={field.onChange}
++                error={errors.clientId?.message}
++              />
++            )}
++          />
++
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <DatePicker
++              label="Quotation Date"
++              required
++              error={errors.quotationDate?.message}
++              {...register('quotationDate')}
++            />
++            <DatePicker label="Valid Until" required error={errors.validUntil?.message} {...register('validUntil')} />
++          </div>
++
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input
++              label="Amount (₹)"
++              required
++              type="number"
++              min={0}
++              placeholder="e.g. 350000"
++              error={errors.amount?.message}
++              {...register('amount', { valueAsNumber: true })}
++            />
++            <Controller
++              control={control}
++              name="status"
++              render={({ field }) => (
++                <Select
++                  label="Status"
++                  required
++                  options={STATUS_OPTIONS}
++                  value={field.value}
++                  onValueChange={field.onChange}
++                />
++              )}
++            />
++          </div>
++
++          <Input label="Notes" placeholder="What this quotation covers" {...register('notes')} />
++        </ModalBody>
++        <ModalFooter>
++          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
++            Cancel
++          </Button>
++          <Button type="submit" isLoading={isSubmitting}>
++            {isEdit ? 'Save Changes' : 'Add Quotation'}
++          </Button>
++        </ModalFooter>
++      </form>
++    </Modal>
++  );
++}
+diff --git a/src/features/quotations/hooks/useQuotations.ts b/src/features/quotations/hooks/useQuotations.ts
+new file mode 100644
+index 0000000..27c5b17
+--- /dev/null
++++ b/src/features/quotations/hooks/useQuotations.ts
+@@ -0,0 +1,50 @@
++/**
++ * Purpose: Data-fetching/mutation hooks for the Quotations module
++ * Responsibilities: Wrap quotationService calls in useQuery/useMutation (caching, loading/error
++ *                    states, cache invalidation on write) — this is the only thing
++ *                    QuotationsListPage and its modal import from the data layer
++ * Dependencies: @tanstack/react-query, quotationService, quotation.types
++ * Export: useQuotations, useCreateQuotation, useUpdateQuotation, useDeleteQuotation
++ */
++import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
++import {
++  getQuotations,
++  createQuotation,
++  updateQuotation,
++  deleteQuotation,
++} from '../../../services/quotationService';
++import type { QuotationFormValues, QuotationListParams } from '../../../types/quotation.types';
++
++const QUOTATIONS_KEY = 'quotations';
++
++export function useQuotations(params: QuotationListParams) {
++  return useQuery({
++    queryKey: [QUOTATIONS_KEY, params],
++    queryFn: () => getQuotations(params),
++    placeholderData: (prev) => prev,
++  });
++}
++
++export function useCreateQuotation() {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: (values: QuotationFormValues) => createQuotation(values),
++    onSuccess: () => queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY] }),
++  });
++}
++
++export function useUpdateQuotation() {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: ({ id, values }: { id: string; values: QuotationFormValues }) => updateQuotation(id, values),
++    onSuccess: () => queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY] }),
++  });
++}
++
++export function useDeleteQuotation() {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: (id: string) => deleteQuotation(id),
++    onSuccess: () => queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY] }),
++  });
++}
+diff --git a/src/pages/quotations/QuotationsListPage.tsx b/src/pages/quotations/QuotationsListPage.tsx
+index 096931e..304b828 100644
+--- a/src/pages/quotations/QuotationsListPage.tsx
++++ b/src/pages/quotations/QuotationsListPage.tsx
+@@ -1,11 +1,256 @@
+ /**
+- * Purpose: Quotations module landing page — stub pending module-by-module build
+- * Responsibilities: Render PlaceholderPage until this module is generated
+- * Dependencies: PlaceholderPage
++ * Purpose: Quotations module landing page
++ * Responsibilities: Compose PageHeader ("+ Add Quotation"), SearchBar, FilterBar (status/client),
++ *                    DataTable (sortable, paginated), row ActionMenu (Edit/Delete),
++ *                    QuotationFormModal (add/edit) — this page holds only UI/local state; all
++ *                    data access goes through the useQuotations hooks.
++ * Dependencies: PageHeader, SearchBar, FilterBar, StatusBadge, ExportButton (shared), DataTable,
++ *               Select, Pagination, Button (ui), QuotationFormModal (features), useQuotations
++ *               hooks, useClientOptions (Projects feature — shared Client picker)
+  * Export: default
+  */
+-import { PlaceholderPage } from '../PlaceholderPage';
++import { useMemo, useState } from 'react';
++import type { ColumnDef, SortingState } from '@tanstack/react-table';
++import { Plus, Pencil, Trash2, FileText } from 'lucide-react';
++import { PageHeader } from '../../components/shared/PageHeader';
++import { SearchBar } from '../../components/shared/SearchBar';
++import { FilterBar } from '../../components/shared/FilterBar';
++import { ActionMenu } from '../../components/shared/ActionMenu';
++import { StatusBadge } from '../../components/shared/StatusBadge';
++import { ExportButton, type ExportFormat } from '../../components/shared/ExportButton';
++import { DataTable } from '../../components/ui/Table';
++import { Select } from '../../components/ui/Select';
++import { Pagination } from '../../components/ui/Pagination';
++import { Button } from '../../components/ui/Button';
++import { toast } from '../../components/ui/Toast';
++import { formatCompactCurrency } from '../../utils/formatCurrency';
++import {
++  useQuotations,
++  useCreateQuotation,
++  useUpdateQuotation,
++  useDeleteQuotation,
++} from '../../features/quotations/hooks/useQuotations';
++import { useClientOptions } from '../../features/projects/hooks/useProjects';
++import { QuotationFormModal } from '../../features/quotations/components/QuotationFormModal';
++import type { Quotation, QuotationFormValues } from '../../types/quotation.types';
++import type { QuotationStatus } from '../../types/common.types';
+ 
+-export default function Page() {
+-  return <PlaceholderPage title="Quotations" />;
++const PAGE_SIZE = 10;
++
++const STATUS_FILTER_OPTIONS = [
++  { value: 'Draft', label: 'Draft' },
++  { value: 'Sent', label: 'Sent' },
++  { value: 'Accepted', label: 'Accepted' },
++  { value: 'Rejected', label: 'Rejected' },
++  { value: 'Expired', label: 'Expired' },
++];
++
++export default function QuotationsListPage() {
++  const [page, setPage] = useState(1);
++  const [search, setSearch] = useState('');
++  const [status, setStatus] = useState<QuotationStatus | undefined>(undefined);
++  const [clientId, setClientId] = useState<string | undefined>(undefined);
++  const [sorting, setSorting] = useState<SortingState>([]);
++
++  const [formOpen, setFormOpen] = useState(false);
++  const [editingQuotation, setEditingQuotation] = useState<Quotation | undefined>(undefined);
++
++  const clientOptionsQuery = useClientOptions();
++
++  const queryParams = useMemo(
++    () => ({
++      page,
++      pageSize: PAGE_SIZE,
++      search: search || undefined,
++      status,
++      clientId,
++      sortBy: sorting[0]?.id,
++      sortDirection: (sorting[0] ? (sorting[0].desc ? 'desc' : 'asc') : undefined) as
++        | 'asc'
++        | 'desc'
++        | undefined,
++    }),
++    [page, search, status, clientId, sorting]
++  );
++
++  const quotationsQuery = useQuotations(queryParams);
++  const createQuotation = useCreateQuotation();
++  const updateQuotation = useUpdateQuotation();
++  const deleteQuotation = useDeleteQuotation();
++
++  function openAddModal() {
++    setEditingQuotation(undefined);
++    setFormOpen(true);
++  }
++
++  function openEditModal(quotation: Quotation) {
++    setEditingQuotation(quotation);
++    setFormOpen(true);
++  }
++
++  function handleFormSubmit(values: QuotationFormValues) {
++    if (editingQuotation) {
++      updateQuotation.mutate(
++        { id: editingQuotation.id, values },
++        {
++          onSuccess: () => {
++            toast.success(`${editingQuotation.quotationNo} updated`);
++            setFormOpen(false);
++          },
++          onError: () => toast.error('Failed to update quotation'),
++        }
++      );
++    } else {
++      createQuotation.mutate(values, {
++        onSuccess: () => {
++          toast.success('Quotation added');
++          setFormOpen(false);
++        },
++        onError: () => toast.error('Failed to add quotation'),
++      });
++    }
++  }
++
++  function handleDelete(quotation: Quotation) {
++    if (!window.confirm(`Delete quotation ${quotation.quotationNo}? This cannot be undone.`)) return;
++    deleteQuotation.mutate(quotation.id, {
++      onSuccess: () => toast.success(`${quotation.quotationNo} deleted`),
++      onError: () => toast.error('Failed to delete quotation'),
++    });
++  }
++
++  function handleExport(format: ExportFormat) {
++    toast.info(`Exporting quotations as ${format.toUpperCase()}...`);
++  }
++
++  const columns: ColumnDef<Quotation, any>[] = [
++    { accessorKey: 'quotationNo', header: 'Quotation No' },
++    { accessorKey: 'clientName', header: 'Client' },
++    { accessorKey: 'quotationDate', header: 'Quotation Date' },
++    { accessorKey: 'validUntil', header: 'Valid Until' },
++    {
++      accessorKey: 'amount',
++      header: 'Amount',
++      cell: ({ getValue }) => formatCompactCurrency(getValue() as number),
++    },
++    {
++      accessorKey: 'status',
++      header: 'Status',
++      cell: ({ getValue }) => <StatusBadge status={getValue() as string} />,
++    },
++    {
++      id: 'actions',
++      header: '',
++      cell: ({ row }) => (
++        <div onClick={(e) => e.stopPropagation()}>
++          <ActionMenu
++            items={[
++              { label: 'Edit', icon: <Pencil className="h-4 w-4" />, onClick: () => openEditModal(row.original) },
++              {
++                label: 'Delete',
++                icon: <Trash2 className="h-4 w-4" />,
++                destructive: true,
++                separatorBefore: true,
++                onClick: () => handleDelete(row.original),
++              },
++            ]}
++          />
++        </div>
++      ),
++    },
++  ];
++
++  return (
++    <div className="space-y-6">
++      <PageHeader
++        title="Quotations"
++        description="Pre-sales quotations sent to clients, ahead of MSA and project kickoff."
++        action={
++          <Button leftIcon={<Plus className="h-4 w-4" />} onClick={openAddModal}>
++            Add Quotation
++          </Button>
++        }
++      />
++
++      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
++        <div className="flex flex-1 items-center gap-3">
++          <SearchBar
++            placeholder="Search quotation no, client, notes..."
++            onSearch={(q) => {
++              setSearch(q);
++              setPage(1);
++            }}
++            className="max-w-sm"
++          />
++          <FilterBar
++            activeCount={(status ? 1 : 0) + (clientId ? 1 : 0)}
++            onClear={() => {
++              setStatus(undefined);
++              setClientId(undefined);
++            }}
++          >
++            <Select
++              label="Status"
++              placeholder="All statuses"
++              options={STATUS_FILTER_OPTIONS}
++              value={status}
++              onValueChange={(v) => {
++                setStatus(v as QuotationStatus);
++                setPage(1);
++              }}
++            />
++            <Select
++              label="Client"
++              placeholder="All clients"
++              options={clientOptionsQuery.data ?? []}
++              value={clientId}
++              onValueChange={(v) => {
++                setClientId(v);
++                setPage(1);
++              }}
++            />
++          </FilterBar>
++        </div>
++        <ExportButton onExport={handleExport} />
++      </div>
++
++      <DataTable
++        columns={columns}
++        data={quotationsQuery.data?.data ?? []}
++        isLoading={quotationsQuery.isLoading}
++        isError={quotationsQuery.isError}
++        onRetry={() => quotationsQuery.refetch()}
++        sorting={sorting}
++        onSortingChange={(next) => {
++          setSorting(next);
++          setPage(1);
++        }}
++        emptyTitle="No quotations yet"
++        emptyDescription="Add your first quotation to start tracking pre-sales proposals."
++        emptyAction={
++          <Button leftIcon={<FileText className="h-4 w-4" />} onClick={openAddModal}>
++            Add Quotation
++          </Button>
++        }
++      />
++
++      {quotationsQuery.data && quotationsQuery.data.totalEntries > 0 && (
++        <Pagination
++          currentPage={quotationsQuery.data.page}
++          totalPages={quotationsQuery.data.totalPages}
++          totalEntries={quotationsQuery.data.totalEntries}
++          pageSize={quotationsQuery.data.pageSize}
++          onPageChange={setPage}
++        />
++      )}
++
++      <QuotationFormModal
++        open={formOpen}
++        onOpenChange={setFormOpen}
++        quotation={editingQuotation}
++        onSubmit={handleFormSubmit}
++        isSubmitting={createQuotation.isPending || updateQuotation.isPending}
++      />
++    </div>
++  );
+ }
+diff --git a/src/services/quotationService.ts b/src/services/quotationService.ts
+new file mode 100644
+index 0000000..bad19e9
+--- /dev/null
++++ b/src/services/quotationService.ts
+@@ -0,0 +1,163 @@
++/**
++ * Purpose: Data access layer for the Quotations module
++ * Responsibilities: Expose getQuotations/getQuotationById/createQuotation/updateQuotation/
++ *                    deleteQuotation as the only way features/quotations reads or writes this data
++ * NOTE: No Quotations API endpoint exists yet. Each function is wired to call axiosClient (see the
++ *       commented real call) but currently operates on an in-memory seed array so the UI is
++ *       reviewable end-to-end. Swap the TODO block for the real call once the backend is live.
++ * Dependencies: axiosClient, quotation.types, common.types, clientService (to denormalize clientName)
++ * Export: getQuotations, getQuotationById, createQuotation, updateQuotation, deleteQuotation
++ */
++import type { Quotation, QuotationFormValues, QuotationListParams } from '../types/quotation.types';
++import type { PaginatedResponse } from '../types/common.types';
++import { getClientById } from './clientService';
++
++let SEED_QUOTATIONS: Quotation[] = [
++  {
++    id: '1',
++    quotationNo: 'QT-2025-011',
++    clientId: '1',
++    clientName: 'Aravind Textiles Pvt Ltd',
++    quotationDate: '2025-01-20',
++    validUntil: '2025-02-20',
++    amount: 850000,
++    status: 'Accepted',
++    notes: 'ERP Revamp — Phase 1, converted to PRJ-0001',
++  },
++  {
++    id: '2',
++    quotationNo: 'QT-2025-018',
++    clientId: '2',
++    clientName: 'Nithya Health Solutions',
++    quotationDate: '2025-02-25',
++    validUntil: '2025-03-25',
++    amount: 360000,
++    status: 'Accepted',
++    notes: 'Patient Portal Redesign, converted to PRJ-0002',
++  },
++  {
++    id: '3',
++    quotationNo: 'QT-2025-002',
++    clientId: '4',
++    clientName: 'BlueWave Retail',
++    quotationDate: '2025-01-05',
++    validUntil: '2025-02-05',
++    amount: 980000,
++    status: 'Accepted',
++    notes: 'E-commerce Storefront, converted to PRJ-0004',
++  },
++  {
++    id: '4',
++    quotationNo: 'QT-2025-031',
++    clientId: '3',
++    clientName: 'Prime Logistics Corp',
++    quotationDate: '2025-06-10',
++    validUntil: '2025-07-10',
++    amount: 275000,
++    status: 'Sent',
++    notes: 'Fleet Tracking Dashboard — Phase 2 proposal',
++  },
++  {
++    id: '5',
++    quotationNo: 'QT-2025-033',
++    clientId: '5',
++    clientName: 'Karthik Constructions',
++    quotationDate: '2025-06-18',
++    validUntil: '2025-07-18',
++    amount: 150000,
++    status: 'Draft',
++    notes: 'Site Billing add-on module proposal',
++  },
++];
++
++let nextId = SEED_QUOTATIONS.length + 1;
++
++function delay<T>(value: T, ms = 350): Promise<T> {
++  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
++}
++
++function nextQuotationNo(): string {
++  const year = new Date().getFullYear();
++  return `QT-${year}-${String(nextId).padStart(3, '0')}`;
++}
++
++export async function getQuotations(params: QuotationListParams): Promise<PaginatedResponse<Quotation>> {
++  // TODO: replace with `const { data } = await axiosClient.get<PaginatedResponse<Quotation>>('/quotations', { params }); return data;`
++  let rows = [...SEED_QUOTATIONS];
++
++  if (params.search) {
++    const q = params.search.toLowerCase();
++    rows = rows.filter(
++      (r) =>
++        r.quotationNo.toLowerCase().includes(q) ||
++        r.clientName.toLowerCase().includes(q) ||
++        r.notes.toLowerCase().includes(q)
++    );
++  }
++
++  if (params.status) {
++    rows = rows.filter((r) => r.status === params.status);
++  }
++
++  if (params.clientId) {
++    rows = rows.filter((r) => r.clientId === params.clientId);
++  }
++
++  if (params.sortBy) {
++    const dir = params.sortDirection === 'desc' ? -1 : 1;
++    rows.sort((a, b) => {
++      const av = (a as unknown as Record<string, unknown>)[params.sortBy!];
++      const bv = (b as unknown as Record<string, unknown>)[params.sortBy!];
++      if (av == null || bv == null) return 0;
++      return av > bv ? dir : av < bv ? -dir : 0;
++    });
++  }
++
++  const totalEntries = rows.length;
++  const totalPages = Math.max(1, Math.ceil(totalEntries / params.pageSize));
++  const start = (params.page - 1) * params.pageSize;
++  const paged = rows.slice(start, start + params.pageSize);
++
++  return delay({
++    data: paged,
++    page: params.page,
++    pageSize: params.pageSize,
++    totalEntries,
++    totalPages,
++  });
++}
++
++export async function getQuotationById(id: string): Promise<Quotation | undefined> {
++  // TODO: replace with `const { data } = await axiosClient.get<Quotation>(`/quotations/${id}`); return data;`
++  return delay(SEED_QUOTATIONS.find((r) => r.id === id));
++}
++
++export async function createQuotation(values: QuotationFormValues): Promise<Quotation> {
++  // TODO: replace with `const { data } = await axiosClient.post<Quotation>('/quotations', values); return data;`
++  const client = await getClientById(values.clientId);
++  const quotation: Quotation = {
++    id: String(nextId),
++    quotationNo: nextQuotationNo(),
++    ...values,
++    clientName: client?.companyName ?? 'Unknown Client',
++  };
++  nextId += 1;
++  SEED_QUOTATIONS = [quotation, ...SEED_QUOTATIONS];
++  return delay(quotation);
++}
++
++export async function updateQuotation(id: string, values: QuotationFormValues): Promise<Quotation> {
++  // TODO: replace with `const { data } = await axiosClient.put<Quotation>(`/quotations/${id}`, values); return data;`
++  const client = await getClientById(values.clientId);
++  SEED_QUOTATIONS = SEED_QUOTATIONS.map((r) =>
++    r.id === id ? { ...r, ...values, clientName: client?.companyName ?? r.clientName } : r
++  );
++  const updated = SEED_QUOTATIONS.find((r) => r.id === id)!;
++  return delay(updated);
++}
++
++export async function deleteQuotation(id: string): Promise<void> {
++  // TODO: replace with `await axiosClient.delete(`/quotations/${id}`);`
++  SEED_QUOTATIONS = SEED_QUOTATIONS.filter((r) => r.id !== id);
++  return delay(undefined);
++}
+diff --git a/src/types/common.types.ts b/src/types/common.types.ts
+index bf46ce3..74ae795 100644
+--- a/src/types/common.types.ts
++++ b/src/types/common.types.ts
+@@ -37,3 +37,4 @@ export type MilestoneStatus = 'Not Started' | 'In Progress' | 'Invoice Raised' |
+ export type ProjectStatus = 'Development' | 'UAT' | 'Live' | 'On Hold' | 'Completed';
+ export type ClientStatus = 'Active' | 'Inactive';
+ export type AmcStatus = 'Active' | 'Expiring Soon' | 'Expired';
++export type QuotationStatus = 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Expired';
+diff --git a/src/types/quotation.types.ts b/src/types/quotation.types.ts
+new file mode 100644
+index 0000000..1309ba1
+--- /dev/null
++++ b/src/types/quotation.types.ts
+@@ -0,0 +1,43 @@
++/**
++ * Purpose: TypeScript types for the Quotations module
++ * Responsibilities: Single source of truth for the Quotation entity shape, create/update
++ *                    payloads, and list-query params — services/features/pages all import from
++ *                    here. (No detailed BRD field list was provided for Quotations; fields follow
++ *                    standard pre-sales quotation practice and stay consistent with the
++ *                    Quotation No / MSA No already referenced on the Projects module.)
++ * Dependencies: common.types (QuotationStatus, PaginatedResponse)
++ * Export: Quotation, QuotationFormValues, QuotationListParams
++ */
++import type { QuotationStatus } from './common.types';
++
++export interface Quotation {
++  id: string;
++  quotationNo: string; // e.g. QT-2025-001
++  clientId: string;
++  clientName: string; // denormalized for table display
++  quotationDate: string; // ISO date
++  validUntil: string; // ISO date
++  amount: number;
++  status: QuotationStatus;
++  notes: string;
++}
++
++/** Shape used by the Add/Edit Quotation form (React Hook Form + Zod) */
++export interface QuotationFormValues {
++  clientId: string;
++  quotationDate: string;
++  validUntil: string;
++  amount: number;
++  status: QuotationStatus;
++  notes: string;
++}
++
++export interface QuotationListParams {
++  page: number;
++  pageSize: number;
++  search?: string;
++  status?: QuotationStatus;
++  clientId?: string;
++  sortBy?: string;
++  sortDirection?: 'asc' | 'desc';
++}
+-- 
+2.43.0
+

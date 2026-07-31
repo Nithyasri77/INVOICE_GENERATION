@@ -1,0 +1,900 @@
+From 5186f26d9b80273b932d94f5e758ace1f3f02ebe Mon Sep 17 00:00:00 2001
+From: Claude <assistant@shinecraft.local>
+Date: Fri, 24 Jul 2026 09:52:43 +0000
+Subject: [PATCH 1/2] Build Invoices module (list, create/edit, delete)
+
+---
+ README.md                                     |  14 +-
+ .../invoices/components/InvoiceFormModal.tsx  | 217 ++++++++++++++
+ src/features/invoices/hooks/useInvoices.ts    |  60 ++++
+ .../billing/invoices/InvoicesListPage.tsx     | 265 +++++++++++++++++-
+ src/services/invoiceService.ts                | 209 ++++++++++++++
+ src/services/projectService.ts                |   6 +
+ src/types/invoice.types.ts                    |  49 ++++
+ 7 files changed, 809 insertions(+), 11 deletions(-)
+ create mode 100644 src/features/invoices/components/InvoiceFormModal.tsx
+ create mode 100644 src/features/invoices/hooks/useInvoices.ts
+ create mode 100644 src/services/invoiceService.ts
+ create mode 100644 src/types/invoice.types.ts
+
+diff --git a/README.md b/README.md
+index 5dc64c8..a4904e4 100644
+--- a/README.md
++++ b/README.md
+@@ -46,13 +46,17 @@ clearly marked with a TODO for when the real auth API is connected).
+   quotation practice (Quotation No, Client, Quotation Date, Valid Until, Amount, Status, Notes),
+   consistent with the "Quotation No" already referenced on the Projects module.
+ 
++- ✅ Invoices — fully built: list (search/filter by status+project/sort/paginate), Create/Edit
++  modal (Project picker, Service Category, Billing Type, Billing Stage, dates, Amount, GST,
++  Status — all per BRD's Invoices Module Fields), Delete — seeded with sample data via
++  `invoiceService` (swap-in-ready for the real API)
++
+ ## What's still a placeholder
+ 
+-Every module except Dashboard, Clients, Projects, Milestones, and Quotations currently renders a
+-"coming soon" placeholder page/tab. These get built one at a time, in the order agreed:
+-Invoices → Payments → Receipts → Reports → Settings, plus the additional nav items from your
+-locked wireframe (Leads, Agreements, Credit/Debit Notes, Statement of Account, AMC Contracts,
+-Expenses).
++Every module except Dashboard, Clients, Projects, Milestones, Quotations, and Invoices currently
++renders a "coming soon" placeholder page/tab. These get built one at a time, in the order agreed:
++Payments → Receipts → Reports → Settings, plus the additional nav items from your locked
++wireframe (Leads, Agreements, Credit/Debit Notes, Statement of Account, AMC Contracts, Expenses).
+ 
+ ## Tech Stack
+ 
+diff --git a/src/features/invoices/components/InvoiceFormModal.tsx b/src/features/invoices/components/InvoiceFormModal.tsx
+new file mode 100644
+index 0000000..7ecb86b
+--- /dev/null
++++ b/src/features/invoices/components/InvoiceFormModal.tsx
+@@ -0,0 +1,217 @@
++/**
++ * Purpose: Add/Edit Invoice popup form (BRD: Invoices Module Fields)
++ * Responsibilities: Validate + submit the Invoice form; used by InvoicesListPage for both
++ *                    "+ Create Invoice" (no initialValues) and row "Edit" (initialValues supplied)
++ * Dependencies: Modal/ModalBody/ModalFooter, Input, Select, DatePicker, Button (ui),
++ *               react-hook-form, zod, useProjectOptions
++ * Export: InvoiceFormModal
++ */
++import { useEffect } from 'react';
++import { useForm, Controller } from 'react-hook-form';
++import { zodResolver } from '@hookform/resolvers/zod';
++import { z } from 'zod';
++import { Modal, ModalBody, ModalFooter } from '../../../components/ui/Modal';
++import { Input } from '../../../components/ui/Input';
++import { Select } from '../../../components/ui/Select';
++import { DatePicker } from '../../../components/ui/DatePicker';
++import { Button } from '../../../components/ui/Button';
++import { useProjectOptions } from '../hooks/useInvoices';
++import type { Invoice, InvoiceFormValues } from '../../../types/invoice.types';
++
++const invoiceSchema = z
++  .object({
++    projectId: z.string().min(1, 'Select a project'),
++    serviceCategory: z.string().min(2, 'Service category is required'),
++    billingType: z.enum(['One-Time', 'Milestone-Based', 'Recurring', 'Time & Material']),
++    billingStage: z.string().min(1, 'Billing stage is required'),
++    invoiceDate: z.string().min(1, 'Invoice date is required'),
++    dueDate: z.string().min(1, 'Due date is required'),
++    amount: z.number().positive('Enter a valid amount'),
++    gst: z.number().min(0, 'Enter a valid GST amount'),
++    status: z.enum(['Draft', 'Sent', 'Part Paid', 'Paid', 'Overdue']),
++  })
++  .refine((data) => new Date(data.dueDate) >= new Date(data.invoiceDate), {
++    message: 'Due date must be on or after the invoice date',
++    path: ['dueDate'],
++  });
++
++export interface InvoiceFormModalProps {
++  open: boolean;
++  onOpenChange: (open: boolean) => void;
++  invoice?: Invoice;
++  onSubmit: (values: InvoiceFormValues) => void;
++  isSubmitting?: boolean;
++}
++
++const BILLING_TYPE_OPTIONS = [
++  { value: 'One-Time', label: 'One-Time' },
++  { value: 'Milestone-Based', label: 'Milestone-Based' },
++  { value: 'Recurring', label: 'Recurring' },
++  { value: 'Time & Material', label: 'Time & Material' },
++];
++
++const STATUS_OPTIONS = [
++  { value: 'Draft', label: 'Draft' },
++  { value: 'Sent', label: 'Sent' },
++  { value: 'Part Paid', label: 'Part Paid' },
++  { value: 'Paid', label: 'Paid' },
++  { value: 'Overdue', label: 'Overdue' },
++];
++
++const EMPTY_VALUES: InvoiceFormValues = {
++  projectId: '',
++  serviceCategory: '',
++  billingType: 'One-Time',
++  billingStage: '',
++  invoiceDate: '',
++  dueDate: '',
++  amount: 0,
++  gst: 0,
++  status: 'Draft',
++};
++
++export function InvoiceFormModal({ open, onOpenChange, invoice, onSubmit, isSubmitting }: InvoiceFormModalProps) {
++  const isEdit = !!invoice;
++  const projectOptionsQuery = useProjectOptions();
++
++  const {
++    register,
++    control,
++    handleSubmit,
++    reset,
++    formState: { errors },
++  } = useForm<InvoiceFormValues>({
++    resolver: zodResolver(invoiceSchema),
++    defaultValues: EMPTY_VALUES,
++  });
++
++  useEffect(() => {
++    if (open) {
++      reset(
++        invoice
++          ? {
++              projectId: invoice.projectId,
++              serviceCategory: invoice.serviceCategory,
++              billingType: invoice.billingType,
++              billingStage: invoice.billingStage,
++              invoiceDate: invoice.invoiceDate,
++              dueDate: invoice.dueDate,
++              amount: invoice.amount,
++              gst: invoice.gst,
++              status: invoice.status,
++            }
++          : EMPTY_VALUES
++      );
++    }
++  }, [open, invoice, reset]);
++
++  return (
++    <Modal
++      open={open}
++      onOpenChange={onOpenChange}
++      title={isEdit ? 'Edit Invoice' : 'Create Invoice'}
++      description={isEdit ? "Update this invoice's details." : 'Raise a new invoice against a project.'}
++      size="lg"
++    >
++      <form onSubmit={handleSubmit(onSubmit)}>
++        <ModalBody className="space-y-4">
++          <Controller
++            control={control}
++            name="projectId"
++            render={({ field }) => (
++              <Select
++                label="Project"
++                required
++                placeholder="Select a project"
++                options={projectOptionsQuery.data ?? []}
++                value={field.value}
++                onValueChange={field.onChange}
++                error={errors.projectId?.message}
++                disabled={isEdit}
++              />
++            )}
++          />
++
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input
++              label="Service Category"
++              required
++              placeholder="e.g. ERP Implementation"
++              error={errors.serviceCategory?.message}
++              {...register('serviceCategory')}
++            />
++            <Controller
++              control={control}
++              name="billingType"
++              render={({ field }) => (
++                <Select
++                  label="Billing Type"
++                  required
++                  options={BILLING_TYPE_OPTIONS}
++                  value={field.value}
++                  onValueChange={field.onChange}
++                />
++              )}
++            />
++          </div>
++
++          <Input
++            label="Billing Stage"
++            required
++            placeholder="e.g. Advance, UAT, Go Live"
++            error={errors.billingStage?.message}
++            {...register('billingStage')}
++          />
++
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <DatePicker label="Invoice Date" required error={errors.invoiceDate?.message} {...register('invoiceDate')} />
++            <DatePicker label="Due Date" required error={errors.dueDate?.message} {...register('dueDate')} />
++          </div>
++
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input
++              label="Amount (₹)"
++              required
++              type="number"
++              min={0}
++              placeholder="e.g. 170000"
++              error={errors.amount?.message}
++              {...register('amount', { valueAsNumber: true })}
++            />
++            <Input
++              label="GST (₹)"
++              required
++              type="number"
++              min={0}
++              placeholder="e.g. 30600"
++              error={errors.gst?.message}
++              {...register('gst', { valueAsNumber: true })}
++            />
++          </div>
++
++          <Controller
++            control={control}
++            name="status"
++            render={({ field }) => (
++              <Select
++                label="Status"
++                required
++                options={STATUS_OPTIONS}
++                value={field.value}
++                onValueChange={field.onChange}
++              />
++            )}
++          />
++        </ModalBody>
++        <ModalFooter>
++          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
++            Cancel
++          </Button>
++          <Button type="submit" isLoading={isSubmitting}>
++            {isEdit ? 'Save Changes' : 'Create Invoice'}
++          </Button>
++        </ModalFooter>
++      </form>
++    </Modal>
++  );
++}
+diff --git a/src/features/invoices/hooks/useInvoices.ts b/src/features/invoices/hooks/useInvoices.ts
+new file mode 100644
+index 0000000..80bdd2c
+--- /dev/null
++++ b/src/features/invoices/hooks/useInvoices.ts
+@@ -0,0 +1,60 @@
++/**
++ * Purpose: Data-fetching/mutation hooks for the Invoices module
++ * Responsibilities: Wrap invoiceService calls in useQuery/useMutation (caching, loading/error
++ *                    states, cache invalidation on write); also exposes useProjectOptions for the
++ *                    Project picker in InvoiceFormModal
++ * Dependencies: @tanstack/react-query, invoiceService, projectService, invoice.types
++ * Export: useInvoices, useCreateInvoice, useUpdateInvoice, useDeleteInvoice, useProjectOptions
++ */
++import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
++import {
++  getInvoices,
++  createInvoice,
++  updateInvoice,
++  deleteInvoice,
++} from '../../../services/invoiceService';
++import { getAllProjects } from '../../../services/projectService';
++import type { InvoiceFormValues, InvoiceListParams } from '../../../types/invoice.types';
++
++const INVOICES_KEY = 'invoices';
++
++export function useInvoices(params: InvoiceListParams) {
++  return useQuery({
++    queryKey: [INVOICES_KEY, params],
++    queryFn: () => getInvoices(params),
++    placeholderData: (prev) => prev,
++  });
++}
++
++export function useCreateInvoice() {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: (values: InvoiceFormValues) => createInvoice(values),
++    onSuccess: () => queryClient.invalidateQueries({ queryKey: [INVOICES_KEY] }),
++  });
++}
++
++export function useUpdateInvoice() {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: ({ id, values }: { id: string; values: InvoiceFormValues }) => updateInvoice(id, values),
++    onSuccess: () => queryClient.invalidateQueries({ queryKey: [INVOICES_KEY] }),
++  });
++}
++
++export function useDeleteInvoice() {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: (id: string) => deleteInvoice(id),
++    onSuccess: () => queryClient.invalidateQueries({ queryKey: [INVOICES_KEY] }),
++  });
++}
++
++/** Project dropdown options for the invoice create/edit form */
++export function useProjectOptions() {
++  return useQuery({
++    queryKey: ['projects', 'options'],
++    queryFn: getAllProjects,
++    select: (projects) => projects.map((p) => ({ value: p.id, label: `${p.projectCode} — ${p.projectName}` })),
++  });
++}
+diff --git a/src/pages/billing/invoices/InvoicesListPage.tsx b/src/pages/billing/invoices/InvoicesListPage.tsx
+index 9c8c730..7a50793 100644
+--- a/src/pages/billing/invoices/InvoicesListPage.tsx
++++ b/src/pages/billing/invoices/InvoicesListPage.tsx
+@@ -1,11 +1,264 @@
+ /**
+- * Purpose: Tax Invoices module landing page — stub pending module-by-module build
+- * Responsibilities: Render PlaceholderPage until this module is generated
+- * Dependencies: PlaceholderPage
++ * Purpose: Invoices module landing page (BRD: Invoices Module Fields)
++ * Responsibilities: Compose PageHeader ("+ Create Invoice"), SearchBar, FilterBar (status/project),
++ *                    DataTable (sortable, paginated), row ActionMenu (Edit/Delete),
++ *                    InvoiceFormModal (add/edit) — this page holds only UI/local state; all data
++ *                    access goes through the useInvoices hooks.
++ * Dependencies: PageHeader, SearchBar, FilterBar, StatusBadge, ExportButton (shared), DataTable,
++ *               Select, Pagination, Button (ui), InvoiceFormModal (features), useInvoices hooks
+  * Export: default
+  */
+-import { PlaceholderPage } from '../../PlaceholderPage';
++import { useMemo, useState } from 'react';
++import type { ColumnDef, SortingState } from '@tanstack/react-table';
++import { Plus, Pencil, Trash2, Receipt } from 'lucide-react';
++import { PageHeader } from '../../../components/shared/PageHeader';
++import { SearchBar } from '../../../components/shared/SearchBar';
++import { FilterBar } from '../../../components/shared/FilterBar';
++import { ActionMenu } from '../../../components/shared/ActionMenu';
++import { StatusBadge } from '../../../components/shared/StatusBadge';
++import { ExportButton, type ExportFormat } from '../../../components/shared/ExportButton';
++import { DataTable } from '../../../components/ui/Table';
++import { Select } from '../../../components/ui/Select';
++import { Pagination } from '../../../components/ui/Pagination';
++import { Button } from '../../../components/ui/Button';
++import { toast } from '../../../components/ui/Toast';
++import { formatCompactCurrency } from '../../../utils/formatCurrency';
++import {
++  useInvoices,
++  useCreateInvoice,
++  useUpdateInvoice,
++  useDeleteInvoice,
++  useProjectOptions,
++} from '../../../features/invoices/hooks/useInvoices';
++import { InvoiceFormModal } from '../../../features/invoices/components/InvoiceFormModal';
++import type { Invoice, InvoiceFormValues } from '../../../types/invoice.types';
++import type { InvoiceStatus } from '../../../types/common.types';
+ 
+-export default function Page() {
+-  return <PlaceholderPage title="Tax Invoices" />;
++const PAGE_SIZE = 10;
++
++const STATUS_FILTER_OPTIONS = [
++  { value: 'Draft', label: 'Draft' },
++  { value: 'Sent', label: 'Sent' },
++  { value: 'Part Paid', label: 'Part Paid' },
++  { value: 'Paid', label: 'Paid' },
++  { value: 'Overdue', label: 'Overdue' },
++];
++
++export default function InvoicesListPage() {
++  const [page, setPage] = useState(1);
++  const [search, setSearch] = useState('');
++  const [status, setStatus] = useState<InvoiceStatus | undefined>(undefined);
++  const [projectId, setProjectId] = useState<string | undefined>(undefined);
++  const [sorting, setSorting] = useState<SortingState>([]);
++
++  const [formOpen, setFormOpen] = useState(false);
++  const [editingInvoice, setEditingInvoice] = useState<Invoice | undefined>(undefined);
++
++  const projectOptionsQuery = useProjectOptions();
++
++  const queryParams = useMemo(
++    () => ({
++      page,
++      pageSize: PAGE_SIZE,
++      search: search || undefined,
++      status,
++      projectId,
++      sortBy: sorting[0]?.id,
++      sortDirection: (sorting[0] ? (sorting[0].desc ? 'desc' : 'asc') : undefined) as
++        | 'asc'
++        | 'desc'
++        | undefined,
++    }),
++    [page, search, status, projectId, sorting]
++  );
++
++  const invoicesQuery = useInvoices(queryParams);
++  const createInvoice = useCreateInvoice();
++  const updateInvoice = useUpdateInvoice();
++  const deleteInvoice = useDeleteInvoice();
++
++  function openAddModal() {
++    setEditingInvoice(undefined);
++    setFormOpen(true);
++  }
++
++  function openEditModal(invoice: Invoice) {
++    setEditingInvoice(invoice);
++    setFormOpen(true);
++  }
++
++  function handleFormSubmit(values: InvoiceFormValues) {
++    if (editingInvoice) {
++      updateInvoice.mutate(
++        { id: editingInvoice.id, values },
++        {
++          onSuccess: () => {
++            toast.success(`${editingInvoice.invoiceNo} updated`);
++            setFormOpen(false);
++          },
++          onError: () => toast.error('Failed to update invoice'),
++        }
++      );
++    } else {
++      createInvoice.mutate(values, {
++        onSuccess: () => {
++          toast.success('Invoice created');
++          setFormOpen(false);
++        },
++        onError: () => toast.error('Failed to create invoice'),
++      });
++    }
++  }
++
++  function handleDelete(invoice: Invoice) {
++    if (!window.confirm(`Delete invoice ${invoice.invoiceNo}? This cannot be undone.`)) return;
++    deleteInvoice.mutate(invoice.id, {
++      onSuccess: () => toast.success(`${invoice.invoiceNo} deleted`),
++      onError: () => toast.error('Failed to delete invoice'),
++    });
++  }
++
++  function handleExport(format: ExportFormat) {
++    toast.info(`Exporting invoices as ${format.toUpperCase()}...`);
++  }
++
++  const columns: ColumnDef<Invoice, any>[] = [
++    { accessorKey: 'invoiceNo', header: 'Invoice No' },
++    { accessorKey: 'projectName', header: 'Project' },
++    { accessorKey: 'clientName', header: 'Client' },
++    { accessorKey: 'serviceCategory', header: 'Service Category' },
++    { accessorKey: 'billingType', header: 'Billing Type' },
++    { accessorKey: 'billingStage', header: 'Billing Stage' },
++    { accessorKey: 'invoiceDate', header: 'Invoice Date' },
++    { accessorKey: 'dueDate', header: 'Due Date' },
++    {
++      accessorKey: 'amount',
++      header: 'Amount',
++      cell: ({ getValue }) => formatCompactCurrency(getValue() as number),
++    },
++    {
++      accessorKey: 'gst',
++      header: 'GST',
++      cell: ({ getValue }) => formatCompactCurrency(getValue() as number),
++    },
++    {
++      accessorKey: 'status',
++      header: 'Status',
++      cell: ({ getValue }) => <StatusBadge status={getValue() as string} />,
++    },
++    {
++      id: 'actions',
++      header: '',
++      cell: ({ row }) => (
++        <div onClick={(e) => e.stopPropagation()}>
++          <ActionMenu
++            items={[
++              { label: 'Edit', icon: <Pencil className="h-4 w-4" />, onClick: () => openEditModal(row.original) },
++              {
++                label: 'Delete',
++                icon: <Trash2 className="h-4 w-4" />,
++                destructive: true,
++                separatorBefore: true,
++                onClick: () => handleDelete(row.original),
++              },
++            ]}
++          />
++        </div>
++      ),
++    },
++  ];
++
++  return (
++    <div className="space-y-6">
++      <PageHeader
++        title="Invoices"
++        description="Tax invoices raised against projects, tracked from draft through payment."
++        action={
++          <Button leftIcon={<Plus className="h-4 w-4" />} onClick={openAddModal}>
++            Create Invoice
++          </Button>
++        }
++      />
++
++      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
++        <div className="flex flex-1 items-center gap-3">
++          <SearchBar
++            placeholder="Search invoice no, project, client..."
++            onSearch={(q) => {
++              setSearch(q);
++              setPage(1);
++            }}
++            className="max-w-sm"
++          />
++          <FilterBar
++            activeCount={(status ? 1 : 0) + (projectId ? 1 : 0)}
++            onClear={() => {
++              setStatus(undefined);
++              setProjectId(undefined);
++            }}
++          >
++            <Select
++              label="Status"
++              placeholder="All statuses"
++              options={STATUS_FILTER_OPTIONS}
++              value={status}
++              onValueChange={(v) => {
++                setStatus(v as InvoiceStatus);
++                setPage(1);
++              }}
++            />
++            <Select
++              label="Project"
++              placeholder="All projects"
++              options={projectOptionsQuery.data ?? []}
++              value={projectId}
++              onValueChange={(v) => {
++                setProjectId(v);
++                setPage(1);
++              }}
++            />
++          </FilterBar>
++        </div>
++        <ExportButton onExport={handleExport} />
++      </div>
++
++      <DataTable
++        columns={columns}
++        data={invoicesQuery.data?.data ?? []}
++        isLoading={invoicesQuery.isLoading}
++        isError={invoicesQuery.isError}
++        onRetry={() => invoicesQuery.refetch()}
++        sorting={sorting}
++        onSortingChange={(next) => {
++          setSorting(next);
++          setPage(1);
++        }}
++        emptyTitle="No invoices yet"
++        emptyDescription="Create your first invoice to start billing a project."
++        emptyAction={
++          <Button leftIcon={<Receipt className="h-4 w-4" />} onClick={openAddModal}>
++            Create Invoice
++          </Button>
++        }
++      />
++
++      {invoicesQuery.data && invoicesQuery.data.totalEntries > 0 && (
++        <Pagination
++          currentPage={invoicesQuery.data.page}
++          totalPages={invoicesQuery.data.totalPages}
++          totalEntries={invoicesQuery.data.totalEntries}
++          pageSize={invoicesQuery.data.pageSize}
++          onPageChange={setPage}
++        />
++      )}
++
++      <InvoiceFormModal
++        open={formOpen}
++        onOpenChange={setFormOpen}
++        invoice={editingInvoice}
++        onSubmit={handleFormSubmit}
++        isSubmitting={createInvoice.isPending || updateInvoice.isPending}
++      />
++    </div>
++  );
+ }
+diff --git a/src/services/invoiceService.ts b/src/services/invoiceService.ts
+new file mode 100644
+index 0000000..ea3629f
+--- /dev/null
++++ b/src/services/invoiceService.ts
+@@ -0,0 +1,209 @@
++/**
++ * Purpose: Data access layer for the Invoices module
++ * Responsibilities: Expose getInvoices/getInvoiceById/createInvoice/updateInvoice/deleteInvoice
++ *                    as the only way features/invoices reads or writes this data
++ * NOTE: No Invoices API endpoint exists yet. Each function is wired to call axiosClient (see the
++ *       commented real call) but currently operates on an in-memory seed array so the UI is
++ *       reviewable end-to-end. Swap the TODO block for the real call once the backend is live.
++ * Dependencies: axiosClient, invoice.types, common.types, projectService (to denormalize
++ *               projectName/clientName)
++ * Export: getInvoices, getInvoiceById, createInvoice, updateInvoice, deleteInvoice
++ */
++import type { Invoice, InvoiceFormValues, InvoiceListParams } from '../types/invoice.types';
++import type { PaginatedResponse } from '../types/common.types';
++import { getProjectById } from './projectService';
++
++let SEED_INVOICES: Invoice[] = [
++  {
++    id: '1',
++    invoiceNo: 'INV-2025-001',
++    projectId: '1',
++    projectName: 'ERP Revamp — Phase 1',
++    clientName: 'Aravind Textiles Pvt Ltd',
++    serviceCategory: 'ERP Implementation',
++    billingType: 'Milestone-Based',
++    billingStage: 'Advance',
++    invoiceDate: '2025-02-05',
++    dueDate: '2025-02-15',
++    amount: 170000,
++    gst: 30600,
++    status: 'Paid',
++  },
++  {
++    id: '2',
++    invoiceNo: 'INV-2025-002',
++    projectId: '1',
++    projectName: 'ERP Revamp — Phase 1',
++    clientName: 'Aravind Textiles Pvt Ltd',
++    serviceCategory: 'ERP Implementation',
++    billingType: 'Milestone-Based',
++    billingStage: 'Development',
++    invoiceDate: '2025-05-16',
++    dueDate: '2025-05-26',
++    amount: 340000,
++    gst: 61200,
++    status: 'Paid',
++  },
++  {
++    id: '3',
++    invoiceNo: 'INV-2025-003',
++    projectId: '2',
++    projectName: 'Patient Portal Redesign',
++    clientName: 'Nithya Health Solutions',
++    serviceCategory: 'Web Development',
++    billingType: 'Milestone-Based',
++    billingStage: 'UI Design Sign-off',
++    invoiceDate: '2025-04-21',
++    dueDate: '2025-05-01',
++    amount: 72000,
++    gst: 12960,
++    status: 'Part Paid',
++  },
++  {
++    id: '4',
++    invoiceNo: 'INV-2025-004',
++    projectId: '4',
++    projectName: 'E-commerce Storefront',
++    clientName: 'BlueWave Retail',
++    serviceCategory: 'Web Development',
++    billingType: 'Milestone-Based',
++    billingStage: 'Checkout Module',
++    invoiceDate: '2025-03-26',
++    dueDate: '2025-04-05',
++    amount: 294000,
++    gst: 52920,
++    status: 'Paid',
++  },
++  {
++    id: '5',
++    invoiceNo: 'INV-2025-005',
++    projectId: '3',
++    projectName: 'Fleet Tracking Dashboard',
++    clientName: 'Prime Logistics Corp',
++    serviceCategory: 'Consulting',
++    billingType: 'Time & Material',
++    billingStage: 'Support Retainer — June',
++    invoiceDate: '2025-06-01',
++    dueDate: '2025-06-11',
++    amount: 45000,
++    gst: 8100,
++    status: 'Overdue',
++  },
++  {
++    id: '6',
++    invoiceNo: 'INV-2025-006',
++    projectId: '5',
++    projectName: 'Site Billing & Inventory Tool',
++    clientName: 'Karthik Constructions',
++    serviceCategory: 'Software Development',
++    billingType: 'One-Time',
++    billingStage: 'Requirement Sign-off',
++    invoiceDate: '2025-07-01',
++    dueDate: '2025-07-11',
++    amount: 60000,
++    gst: 10800,
++    status: 'Sent',
++  },
++];
++
++let nextId = SEED_INVOICES.length + 1;
++
++function delay<T>(value: T, ms = 350): Promise<T> {
++  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
++}
++
++function nextInvoiceNo(): string {
++  const year = new Date().getFullYear();
++  return `INV-${year}-${String(nextId).padStart(3, '0')}`;
++}
++
++export async function getInvoices(params: InvoiceListParams): Promise<PaginatedResponse<Invoice>> {
++  // TODO: replace with `const { data } = await axiosClient.get<PaginatedResponse<Invoice>>('/invoices', { params }); return data;`
++  let rows = [...SEED_INVOICES];
++
++  if (params.search) {
++    const q = params.search.toLowerCase();
++    rows = rows.filter(
++      (r) =>
++        r.invoiceNo.toLowerCase().includes(q) ||
++        r.projectName.toLowerCase().includes(q) ||
++        r.clientName.toLowerCase().includes(q) ||
++        r.serviceCategory.toLowerCase().includes(q) ||
++        r.billingStage.toLowerCase().includes(q)
++    );
++  }
++
++  if (params.status) {
++    rows = rows.filter((r) => r.status === params.status);
++  }
++
++  if (params.projectId) {
++    rows = rows.filter((r) => r.projectId === params.projectId);
++  }
++
++  if (params.sortBy) {
++    const dir = params.sortDirection === 'desc' ? -1 : 1;
++    rows.sort((a, b) => {
++      const av = (a as unknown as Record<string, unknown>)[params.sortBy!];
++      const bv = (b as unknown as Record<string, unknown>)[params.sortBy!];
++      if (av == null || bv == null) return 0;
++      return av > bv ? dir : av < bv ? -dir : 0;
++    });
++  }
++
++  const totalEntries = rows.length;
++  const totalPages = Math.max(1, Math.ceil(totalEntries / params.pageSize));
++  const start = (params.page - 1) * params.pageSize;
++  const paged = rows.slice(start, start + params.pageSize);
++
++  return delay({
++    data: paged,
++    page: params.page,
++    pageSize: params.pageSize,
++    totalEntries,
++    totalPages,
++  });
++}
++
++export async function getInvoiceById(id: string): Promise<Invoice | undefined> {
++  // TODO: replace with `const { data } = await axiosClient.get<Invoice>(`/invoices/${id}`); return data;`
++  return delay(SEED_INVOICES.find((r) => r.id === id));
++}
++
++export async function createInvoice(values: InvoiceFormValues): Promise<Invoice> {
++  // TODO: replace with `const { data } = await axiosClient.post<Invoice>('/invoices', values); return data;`
++  const project = await getProjectById(values.projectId);
++  const invoice: Invoice = {
++    id: String(nextId),
++    invoiceNo: nextInvoiceNo(),
++    ...values,
++    projectName: project?.projectName ?? 'Unknown Project',
++    clientName: project?.clientName ?? 'Unknown Client',
++  };
++  nextId += 1;
++  SEED_INVOICES = [invoice, ...SEED_INVOICES];
++  return delay(invoice);
++}
++
++export async function updateInvoice(id: string, values: InvoiceFormValues): Promise<Invoice> {
++  // TODO: replace with `const { data } = await axiosClient.put<Invoice>(`/invoices/${id}`, values); return data;`
++  const project = await getProjectById(values.projectId);
++  SEED_INVOICES = SEED_INVOICES.map((r) =>
++    r.id === id
++      ? {
++          ...r,
++          ...values,
++          projectName: project?.projectName ?? r.projectName,
++          clientName: project?.clientName ?? r.clientName,
++        }
++      : r
++  );
++  const updated = SEED_INVOICES.find((r) => r.id === id)!;
++  return delay(updated);
++}
++
++export async function deleteInvoice(id: string): Promise<void> {
++  // TODO: replace with `await axiosClient.delete(`/invoices/${id}`);`
++  SEED_INVOICES = SEED_INVOICES.filter((r) => r.id !== id);
++  return delay(undefined);
++}
+diff --git a/src/services/projectService.ts b/src/services/projectService.ts
+index e65933e..0cb9a44 100644
+--- a/src/services/projectService.ts
++++ b/src/services/projectService.ts
+@@ -154,6 +154,12 @@ export async function getProjectById(id: string): Promise<Project | undefined> {
+   return delay(SEED_PROJECTS.find((p) => p.id === id));
+ }
+ 
++export async function getAllProjects(): Promise<Project[]> {
++  // TODO: replace with `const { data } = await axiosClient.get<Project[]>('/projects/all'); return data;`
++  // Lightweight, unpaginated list used to populate Project pickers (e.g. Invoices create/edit form)
++  return delay([...SEED_PROJECTS]);
++}
++
+ export async function createProject(values: ProjectFormValues): Promise<Project> {
+   // TODO: replace with `const { data } = await axiosClient.post<Project>('/projects', values); return data;`
+   const client = await getClientById(values.clientId);
+diff --git a/src/types/invoice.types.ts b/src/types/invoice.types.ts
+new file mode 100644
+index 0000000..70f7511
+--- /dev/null
++++ b/src/types/invoice.types.ts
+@@ -0,0 +1,49 @@
++/**
++ * Purpose: TypeScript types for the Invoices module (BRD: Invoices Module Fields)
++ * Responsibilities: Single source of truth for the Invoice entity shape, create/update payloads,
++ *                    and list-query params — services/features/pages all import from here
++ * Dependencies: common.types (InvoiceStatus, PaginatedResponse)
++ * Export: Invoice, InvoiceFormValues, InvoiceListParams
++ */
++import type { InvoiceStatus } from './common.types';
++
++export type BillingType = 'One-Time' | 'Milestone-Based' | 'Recurring' | 'Time & Material';
++
++export interface Invoice {
++  id: string;
++  invoiceNo: string; // e.g. INV-2025-001 (BRD: Invoice No)
++  projectId: string;
++  projectName: string; // denormalized for table display
++  clientName: string; // denormalized for table display
++  serviceCategory: string;
++  billingType: BillingType;
++  billingStage: string;
++  invoiceDate: string; // ISO date
++  dueDate: string; // ISO date
++  amount: number;
++  gst: number; // GST amount (₹), stored separately from the base amount per BRD
++  status: InvoiceStatus;
++}
++
++/** Shape used by the Create/Edit Invoice form (React Hook Form + Zod) */
++export interface InvoiceFormValues {
++  projectId: string;
++  serviceCategory: string;
++  billingType: BillingType;
++  billingStage: string;
++  invoiceDate: string;
++  dueDate: string;
++  amount: number;
++  gst: number;
++  status: InvoiceStatus;
++}
++
++export interface InvoiceListParams {
++  page: number;
++  pageSize: number;
++  search?: string;
++  status?: InvoiceStatus;
++  projectId?: string;
++  sortBy?: string;
++  sortDirection?: 'asc' | 'desc';
++}
+-- 
+2.43.0
+

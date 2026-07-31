@@ -1,0 +1,859 @@
+From 56d96018726152feab025ccc02c6bc705c522b34 Mon Sep 17 00:00:00 2001
+From: Claude <assistant@shinecraft.local>
+Date: Tue, 28 Jul 2026 04:55:15 +0000
+Subject: [PATCH 3/4] Build Expenses module (list, add/edit, delete)
+
+---
+ README.md                                     |  12 +-
+ .../shared/StatusBadge/StatusBadge.tsx        |   1 +
+ .../expenses/components/ExpenseFormModal.tsx  | 210 ++++++++++++++
+ src/features/expenses/hooks/useExpenses.ts    |  50 ++++
+ src/pages/expenses/ExpensesListPage.tsx       | 268 +++++++++++++++++-
+ src/services/expenseService.ts                | 173 +++++++++++
+ src/types/common.types.ts                     |   1 +
+ src/types/expense.types.ts                    |  55 ++++
+ 8 files changed, 761 insertions(+), 9 deletions(-)
+ create mode 100644 src/features/expenses/components/ExpenseFormModal.tsx
+ create mode 100644 src/features/expenses/hooks/useExpenses.ts
+ create mode 100644 src/services/expenseService.ts
+ create mode 100644 src/types/expense.types.ts
+
+diff --git a/README.md b/README.md
+index aec8b20..b3e659d 100644
+--- a/README.md
++++ b/README.md
+@@ -61,11 +61,17 @@ clearly marked with a TODO for when the real auth API is connected).
+   Invoices + Payments (no separate seed dataset, so it never drifts out of sync) via
+   `reportService`
+ 
++- ✅ Expenses — fully built: list (search/filter by status+category/sort/paginate), Add/Edit
++  modal (optional Project link for overhead vs. project-billed costs, Category, Vendor, Payment
++  Mode, Status), Delete — seeded with sample data via `expenseService` (swap-in-ready for the
++  real API). Note: the BRD only names Expense Tracking as a Future Module without a field list,
++  so this follows standard project-expense tracking practice.
++
+ ## What's still a placeholder
+ 
+-Every module except Dashboard, Clients, Projects, Milestones, Quotations, Invoices, Payments, and
+-Reports currently renders a "coming soon" placeholder page/tab (aside from anything the team has
+-built separately — check `git log` for the latest). Next up: Expenses and Settings, plus anything
++Every module except Dashboard, Clients, Projects, Milestones, Quotations, Invoices, Payments,
++Reports, and Expenses currently renders a "coming soon" placeholder page/tab (aside from anything
++the team has built separately — check `git log` for the latest). Next up: Settings, plus anything
+ else from your locked wireframe.
+ 
+ ## Tech Stack
+diff --git a/src/components/shared/StatusBadge/StatusBadge.tsx b/src/components/shared/StatusBadge/StatusBadge.tsx
+index 29b110c..c7c7ecc 100644
+--- a/src/components/shared/StatusBadge/StatusBadge.tsx
++++ b/src/components/shared/StatusBadge/StatusBadge.tsx
+@@ -50,6 +50,7 @@ const STATUS_COLOR_MAP: Record<string, StatusVariant> = {
+   'Pending Approval': 'warning',
+   Approved: 'success',
+   Rejected: 'danger',
++  Reimbursed: 'info',
+   // Quotation (Draft/Sent/Expired share colors with Invoice/AMC statuses above)
+   Accepted: 'success',
+   // Billing lifecycle statuses used by debit and credit notes
+diff --git a/src/features/expenses/components/ExpenseFormModal.tsx b/src/features/expenses/components/ExpenseFormModal.tsx
+new file mode 100644
+index 0000000..395e2f5
+--- /dev/null
++++ b/src/features/expenses/components/ExpenseFormModal.tsx
+@@ -0,0 +1,210 @@
++/**
++ * Purpose: Add/Edit Expense popup form
++ * Responsibilities: Validate + submit the Expense form; used by ExpensesListPage for both
++ *                    "+ Add Expense" (no initialValues) and row "Edit" (initialValues supplied).
++ *                    The Project field is optional — some expenses are company overhead rather
++ *                    than tied to a specific project.
++ * Dependencies: Modal/ModalBody/ModalFooter, Input, Select, DatePicker, Button (ui),
++ *               react-hook-form, zod, useClientOptions-style Project picker
++ * Export: ExpenseFormModal
++ */
++import { useEffect } from 'react';
++import { useForm, Controller } from 'react-hook-form';
++import { zodResolver } from '@hookform/resolvers/zod';
++import { z } from 'zod';
++import { Modal, ModalBody, ModalFooter } from '../../../components/ui/Modal';
++import { Input } from '../../../components/ui/Input';
++import { Select } from '../../../components/ui/Select';
++import { DatePicker } from '../../../components/ui/DatePicker';
++import { Button } from '../../../components/ui/Button';
++import { useProjectOptions } from '../../invoices/hooks/useInvoices';
++import type { Expense, ExpenseFormValues } from '../../../types/expense.types';
++
++const expenseSchema = z.object({
++  projectId: z.string().optional(),
++  category: z.enum([
++    'Travel',
++    'Software & Tools',
++    'Office Supplies',
++    'Hosting & Infrastructure',
++    'Contractor Payout',
++    'Marketing',
++    'Other',
++  ]),
++  description: z.string().min(2, 'Description is required'),
++  amount: z.number().positive('Enter a valid amount'),
++  expenseDate: z.string().min(1, 'Expense date is required'),
++  vendor: z.string().min(1, 'Vendor is required'),
++  paymentMode: z.string().min(1, 'Payment mode is required'),
++  status: z.enum(['Pending Approval', 'Approved', 'Rejected', 'Reimbursed']),
++});
++
++export interface ExpenseFormModalProps {
++  open: boolean;
++  onOpenChange: (open: boolean) => void;
++  expense?: Expense;
++  onSubmit: (values: ExpenseFormValues) => void;
++  isSubmitting?: boolean;
++}
++
++const CATEGORY_OPTIONS = [
++  { value: 'Travel', label: 'Travel' },
++  { value: 'Software & Tools', label: 'Software & Tools' },
++  { value: 'Office Supplies', label: 'Office Supplies' },
++  { value: 'Hosting & Infrastructure', label: 'Hosting & Infrastructure' },
++  { value: 'Contractor Payout', label: 'Contractor Payout' },
++  { value: 'Marketing', label: 'Marketing' },
++  { value: 'Other', label: 'Other' },
++];
++
++const STATUS_OPTIONS = [
++  { value: 'Pending Approval', label: 'Pending Approval' },
++  { value: 'Approved', label: 'Approved' },
++  { value: 'Rejected', label: 'Rejected' },
++  { value: 'Reimbursed', label: 'Reimbursed' },
++];
++
++const EMPTY_VALUES: ExpenseFormValues = {
++  projectId: '',
++  category: 'Other',
++  description: '',
++  amount: 0,
++  expenseDate: '',
++  vendor: '',
++  paymentMode: '',
++  status: 'Pending Approval',
++};
++
++export function ExpenseFormModal({ open, onOpenChange, expense, onSubmit, isSubmitting }: ExpenseFormModalProps) {
++  const isEdit = !!expense;
++  const projectOptionsQuery = useProjectOptions();
++  const projectSelectOptions = [
++    { value: '', label: 'No Project (Overhead)' },
++    ...(projectOptionsQuery.data ?? []),
++  ];
++
++  const {
++    register,
++    control,
++    handleSubmit,
++    reset,
++    formState: { errors },
++  } = useForm<ExpenseFormValues>({
++    resolver: zodResolver(expenseSchema),
++    defaultValues: EMPTY_VALUES,
++  });
++
++  useEffect(() => {
++    if (open) {
++      reset(
++        expense
++          ? {
++              projectId: expense.projectId ?? '',
++              category: expense.category,
++              description: expense.description,
++              amount: expense.amount,
++              expenseDate: expense.expenseDate,
++              vendor: expense.vendor,
++              paymentMode: expense.paymentMode,
++              status: expense.status,
++            }
++          : EMPTY_VALUES
++      );
++    }
++  }, [open, expense, reset]);
++
++  function handleFormSubmit(values: ExpenseFormValues) {
++    onSubmit({ ...values, projectId: values.projectId || undefined });
++  }
++
++  return (
++    <Modal
++      open={open}
++      onOpenChange={onOpenChange}
++      title={isEdit ? 'Edit Expense' : 'Add Expense'}
++      description={isEdit ? "Update this expense's details." : 'Log a new expense, optionally linked to a project.'}
++      size="lg"
++    >
++      <form onSubmit={handleSubmit(handleFormSubmit)}>
++        <ModalBody className="space-y-4">
++          <Input
++            label="Description"
++            required
++            placeholder="e.g. Staging server hosting — Feb"
++            error={errors.description?.message}
++            {...register('description')}
++          />
++
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Controller
++              control={control}
++              name="category"
++              render={({ field }) => (
++                <Select label="Category" required options={CATEGORY_OPTIONS} value={field.value} onValueChange={field.onChange} />
++              )}
++            />
++            <Controller
++              control={control}
++              name="projectId"
++              render={({ field }) => (
++                <Select
++                  label="Project"
++                  placeholder="No Project (Overhead)"
++                  options={projectSelectOptions}
++                  value={field.value}
++                  onValueChange={field.onChange}
++                />
++              )}
++            />
++          </div>
++
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input
++              label="Amount (₹)"
++              required
++              type="number"
++              min={0}
++              placeholder="e.g. 5400"
++              error={errors.amount?.message}
++              {...register('amount', { valueAsNumber: true })}
++            />
++            <DatePicker label="Expense Date" required error={errors.expenseDate?.message} {...register('expenseDate')} />
++          </div>
++
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input
++              label="Vendor"
++              required
++              placeholder="e.g. DigitalOcean, Self"
++              error={errors.vendor?.message}
++              {...register('vendor')}
++            />
++            <Input
++              label="Payment Mode"
++              required
++              placeholder="e.g. Card, Cash, Bank Transfer"
++              error={errors.paymentMode?.message}
++              {...register('paymentMode')}
++            />
++          </div>
++
++          <Controller
++            control={control}
++            name="status"
++            render={({ field }) => (
++              <Select label="Status" required options={STATUS_OPTIONS} value={field.value} onValueChange={field.onChange} />
++            )}
++          />
++        </ModalBody>
++        <ModalFooter>
++          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
++            Cancel
++          </Button>
++          <Button type="submit" isLoading={isSubmitting}>
++            {isEdit ? 'Save Changes' : 'Add Expense'}
++          </Button>
++        </ModalFooter>
++      </form>
++    </Modal>
++  );
++}
+diff --git a/src/features/expenses/hooks/useExpenses.ts b/src/features/expenses/hooks/useExpenses.ts
+new file mode 100644
+index 0000000..0dd470d
+--- /dev/null
++++ b/src/features/expenses/hooks/useExpenses.ts
+@@ -0,0 +1,50 @@
++/**
++ * Purpose: Data-fetching/mutation hooks for the Expenses module
++ * Responsibilities: Wrap expenseService calls in useQuery/useMutation (caching, loading/error
++ *                    states, cache invalidation on write) — this is the only thing
++ *                    ExpensesListPage and its modal import from the data layer
++ * Dependencies: @tanstack/react-query, expenseService, expense.types
++ * Export: useExpenses, useCreateExpense, useUpdateExpense, useDeleteExpense
++ */
++import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
++import {
++  getExpenses,
++  createExpense,
++  updateExpense,
++  deleteExpense,
++} from '../../../services/expenseService';
++import type { ExpenseFormValues, ExpenseListParams } from '../../../types/expense.types';
++
++const EXPENSES_KEY = 'expenses';
++
++export function useExpenses(params: ExpenseListParams) {
++  return useQuery({
++    queryKey: [EXPENSES_KEY, params],
++    queryFn: () => getExpenses(params),
++    placeholderData: (prev) => prev,
++  });
++}
++
++export function useCreateExpense() {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: (values: ExpenseFormValues) => createExpense(values),
++    onSuccess: () => queryClient.invalidateQueries({ queryKey: [EXPENSES_KEY] }),
++  });
++}
++
++export function useUpdateExpense() {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: ({ id, values }: { id: string; values: ExpenseFormValues }) => updateExpense(id, values),
++    onSuccess: () => queryClient.invalidateQueries({ queryKey: [EXPENSES_KEY] }),
++  });
++}
++
++export function useDeleteExpense() {
++  const queryClient = useQueryClient();
++  return useMutation({
++    mutationFn: (id: string) => deleteExpense(id),
++    onSuccess: () => queryClient.invalidateQueries({ queryKey: [EXPENSES_KEY] }),
++  });
++}
+diff --git a/src/pages/expenses/ExpensesListPage.tsx b/src/pages/expenses/ExpensesListPage.tsx
+index 6b55007..301859b 100644
+--- a/src/pages/expenses/ExpensesListPage.tsx
++++ b/src/pages/expenses/ExpensesListPage.tsx
+@@ -1,11 +1,267 @@
+ /**
+- * Purpose: Expenses module landing page — stub pending module-by-module build
+- * Responsibilities: Render PlaceholderPage until this module is generated
+- * Dependencies: PlaceholderPage
++ * Purpose: Expenses module landing page (BRD Future Module: Expense Tracking)
++ * Responsibilities: Compose PageHeader ("+ Add Expense"), SearchBar, FilterBar (status/category),
++ *                    DataTable (sortable, paginated), row ActionMenu (Edit/Delete),
++ *                    ExpenseFormModal (add/edit) — this page holds only UI/local state; all data
++ *                    access goes through the useExpenses hooks.
++ * Dependencies: PageHeader, SearchBar, FilterBar, StatusBadge, ExportButton (shared), DataTable,
++ *               Select, Pagination, Button (ui), ExpenseFormModal (features), useExpenses hooks
+  * Export: default
+  */
+-import { PlaceholderPage } from '../PlaceholderPage';
++import { useMemo, useState } from 'react';
++import type { ColumnDef, SortingState } from '@tanstack/react-table';
++import { Plus, Pencil, Trash2, Wallet2 } from 'lucide-react';
++import { PageHeader } from '../../components/shared/PageHeader';
++import { SearchBar } from '../../components/shared/SearchBar';
++import { FilterBar } from '../../components/shared/FilterBar';
++import { ActionMenu } from '../../components/shared/ActionMenu';
++import { StatusBadge } from '../../components/shared/StatusBadge';
++import { ExportButton, type ExportFormat } from '../../components/shared/ExportButton';
++import { DataTable } from '../../components/ui/Table';
++import { Select } from '../../components/ui/Select';
++import { Pagination } from '../../components/ui/Pagination';
++import { Button } from '../../components/ui/Button';
++import { toast } from '../../components/ui/Toast';
++import { formatCompactCurrency } from '../../utils/formatCurrency';
++import {
++  useExpenses,
++  useCreateExpense,
++  useUpdateExpense,
++  useDeleteExpense,
++} from '../../features/expenses/hooks/useExpenses';
++import { ExpenseFormModal } from '../../features/expenses/components/ExpenseFormModal';
++import type { Expense, ExpenseCategory, ExpenseFormValues } from '../../types/expense.types';
++import type { ExpenseStatus } from '../../types/common.types';
+ 
+-export default function Page() {
+-  return <PlaceholderPage title="Expenses" />;
++const PAGE_SIZE = 10;
++
++const STATUS_FILTER_OPTIONS = [
++  { value: 'Pending Approval', label: 'Pending Approval' },
++  { value: 'Approved', label: 'Approved' },
++  { value: 'Rejected', label: 'Rejected' },
++  { value: 'Reimbursed', label: 'Reimbursed' },
++];
++
++const CATEGORY_FILTER_OPTIONS = [
++  { value: 'Travel', label: 'Travel' },
++  { value: 'Software & Tools', label: 'Software & Tools' },
++  { value: 'Office Supplies', label: 'Office Supplies' },
++  { value: 'Hosting & Infrastructure', label: 'Hosting & Infrastructure' },
++  { value: 'Contractor Payout', label: 'Contractor Payout' },
++  { value: 'Marketing', label: 'Marketing' },
++  { value: 'Other', label: 'Other' },
++];
++
++export default function ExpensesListPage() {
++  const [page, setPage] = useState(1);
++  const [search, setSearch] = useState('');
++  const [status, setStatus] = useState<ExpenseStatus | undefined>(undefined);
++  const [category, setCategory] = useState<ExpenseCategory | undefined>(undefined);
++  const [sorting, setSorting] = useState<SortingState>([]);
++
++  const [formOpen, setFormOpen] = useState(false);
++  const [editingExpense, setEditingExpense] = useState<Expense | undefined>(undefined);
++
++  const queryParams = useMemo(
++    () => ({
++      page,
++      pageSize: PAGE_SIZE,
++      search: search || undefined,
++      status,
++      category,
++      sortBy: sorting[0]?.id,
++      sortDirection: (sorting[0] ? (sorting[0].desc ? 'desc' : 'asc') : undefined) as
++        | 'asc'
++        | 'desc'
++        | undefined,
++    }),
++    [page, search, status, category, sorting]
++  );
++
++  const expensesQuery = useExpenses(queryParams);
++  const createExpense = useCreateExpense();
++  const updateExpense = useUpdateExpense();
++  const deleteExpense = useDeleteExpense();
++
++  function openAddModal() {
++    setEditingExpense(undefined);
++    setFormOpen(true);
++  }
++
++  function openEditModal(expense: Expense) {
++    setEditingExpense(expense);
++    setFormOpen(true);
++  }
++
++  function handleFormSubmit(values: ExpenseFormValues) {
++    if (editingExpense) {
++      updateExpense.mutate(
++        { id: editingExpense.id, values },
++        {
++          onSuccess: () => {
++            toast.success(`${editingExpense.expenseCode} updated`);
++            setFormOpen(false);
++          },
++          onError: () => toast.error('Failed to update expense'),
++        }
++      );
++    } else {
++      createExpense.mutate(values, {
++        onSuccess: () => {
++          toast.success('Expense added');
++          setFormOpen(false);
++        },
++        onError: () => toast.error('Failed to add expense'),
++      });
++    }
++  }
++
++  function handleDelete(expense: Expense) {
++    if (!window.confirm(`Delete expense ${expense.expenseCode}? This cannot be undone.`)) return;
++    deleteExpense.mutate(expense.id, {
++      onSuccess: () => toast.success(`${expense.expenseCode} deleted`),
++      onError: () => toast.error('Failed to delete expense'),
++    });
++  }
++
++  function handleExport(format: ExportFormat) {
++    toast.info(`Exporting expenses as ${format.toUpperCase()}...`);
++  }
++
++  const columns: ColumnDef<Expense, any>[] = [
++    { accessorKey: 'expenseCode', header: 'Expense ID' },
++    { accessorKey: 'description', header: 'Description' },
++    { accessorKey: 'category', header: 'Category' },
++    {
++      accessorKey: 'projectName',
++      header: 'Project',
++      cell: ({ getValue }) => (getValue() as string) || '—',
++    },
++    { accessorKey: 'vendor', header: 'Vendor' },
++    {
++      accessorKey: 'amount',
++      header: 'Amount',
++      cell: ({ getValue }) => formatCompactCurrency(getValue() as number),
++    },
++    { accessorKey: 'expenseDate', header: 'Date' },
++    {
++      accessorKey: 'status',
++      header: 'Status',
++      cell: ({ getValue }) => <StatusBadge status={getValue() as string} />,
++    },
++    {
++      id: 'actions',
++      header: '',
++      cell: ({ row }) => (
++        <div onClick={(e) => e.stopPropagation()}>
++          <ActionMenu
++            items={[
++              { label: 'Edit', icon: <Pencil className="h-4 w-4" />, onClick: () => openEditModal(row.original) },
++              {
++                label: 'Delete',
++                icon: <Trash2 className="h-4 w-4" />,
++                destructive: true,
++                separatorBefore: true,
++                onClick: () => handleDelete(row.original),
++              },
++            ]}
++          />
++        </div>
++      ),
++    },
++  ];
++
++  return (
++    <div className="space-y-6">
++      <PageHeader
++        title="Expenses"
++        description="Project and overhead costs, tracked from submission through reimbursement."
++        action={
++          <Button leftIcon={<Plus className="h-4 w-4" />} onClick={openAddModal}>
++            Add Expense
++          </Button>
++        }
++      />
++
++      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
++        <div className="flex flex-1 items-center gap-3">
++          <SearchBar
++            placeholder="Search expense ID, description, vendor, project..."
++            onSearch={(q) => {
++              setSearch(q);
++              setPage(1);
++            }}
++            className="max-w-sm"
++          />
++          <FilterBar
++            activeCount={(status ? 1 : 0) + (category ? 1 : 0)}
++            onClear={() => {
++              setStatus(undefined);
++              setCategory(undefined);
++            }}
++          >
++            <Select
++              label="Status"
++              placeholder="All statuses"
++              options={STATUS_FILTER_OPTIONS}
++              value={status}
++              onValueChange={(v) => {
++                setStatus(v as ExpenseStatus);
++                setPage(1);
++              }}
++            />
++            <Select
++              label="Category"
++              placeholder="All categories"
++              options={CATEGORY_FILTER_OPTIONS}
++              value={category}
++              onValueChange={(v) => {
++                setCategory(v as ExpenseCategory);
++                setPage(1);
++              }}
++            />
++          </FilterBar>
++        </div>
++        <ExportButton onExport={handleExport} />
++      </div>
++
++      <DataTable
++        columns={columns}
++        data={expensesQuery.data?.data ?? []}
++        isLoading={expensesQuery.isLoading}
++        isError={expensesQuery.isError}
++        onRetry={() => expensesQuery.refetch()}
++        sorting={sorting}
++        onSortingChange={(next) => {
++          setSorting(next);
++          setPage(1);
++        }}
++        emptyTitle="No expenses yet"
++        emptyDescription="Add your first expense to start tracking project and overhead costs."
++        emptyAction={
++          <Button leftIcon={<Wallet2 className="h-4 w-4" />} onClick={openAddModal}>
++            Add Expense
++          </Button>
++        }
++      />
++
++      {expensesQuery.data && expensesQuery.data.totalEntries > 0 && (
++        <Pagination
++          currentPage={expensesQuery.data.page}
++          totalPages={expensesQuery.data.totalPages}
++          totalEntries={expensesQuery.data.totalEntries}
++          pageSize={expensesQuery.data.pageSize}
++          onPageChange={setPage}
++        />
++      )}
++
++      <ExpenseFormModal
++        open={formOpen}
++        onOpenChange={setFormOpen}
++        expense={editingExpense}
++        onSubmit={handleFormSubmit}
++        isSubmitting={createExpense.isPending || updateExpense.isPending}
++      />
++    </div>
++  );
+ }
+diff --git a/src/services/expenseService.ts b/src/services/expenseService.ts
+new file mode 100644
+index 0000000..7bd19db
+--- /dev/null
++++ b/src/services/expenseService.ts
+@@ -0,0 +1,173 @@
++/**
++ * Purpose: Data access layer for the Expenses module
++ * Responsibilities: Expose getExpenses/createExpense/updateExpense/deleteExpense as the only way
++ *                    features/expenses reads or writes this data
++ * NOTE: No Expenses API endpoint exists yet. Each function is wired to call axiosClient (see the
++ *       commented real call) but currently operates on an in-memory seed array so the UI is
++ *       reviewable end-to-end. Swap the TODO block for the real call once the backend is live.
++ * Dependencies: axiosClient, expense.types, common.types, projectService (to denormalize projectName)
++ * Export: getExpenses, getExpenseById, createExpense, updateExpense, deleteExpense
++ */
++import type { Expense, ExpenseFormValues, ExpenseListParams } from '../types/expense.types';
++import type { PaginatedResponse } from '../types/common.types';
++import { getProjectById } from './projectService';
++
++let SEED_EXPENSES: Expense[] = [
++  {
++    id: '1',
++    expenseCode: 'EXP-0001',
++    projectId: '1',
++    projectName: 'ERP Revamp — Phase 1',
++    category: 'Hosting & Infrastructure',
++    description: 'Staging server hosting — Feb',
++    amount: 4200,
++    expenseDate: '2025-02-10',
++    vendor: 'DigitalOcean',
++    paymentMode: 'Card',
++    status: 'Reimbursed',
++  },
++  {
++    id: '2',
++    expenseCode: 'EXP-0002',
++    projectId: '2',
++    projectName: 'Patient Portal Redesign',
++    category: 'Software & Tools',
++    description: 'Figma team seats — Q2',
++    amount: 6800,
++    expenseDate: '2025-04-02',
++    vendor: 'Figma Inc.',
++    paymentMode: 'Card',
++    status: 'Approved',
++  },
++  {
++    id: '3',
++    projectId: undefined,
++    expenseCode: 'EXP-0003',
++    projectName: undefined,
++    category: 'Office Supplies',
++    description: 'Printer cartridges + stationery',
++    amount: 2100,
++    expenseDate: '2025-05-18',
++    vendor: 'Local Vendor',
++    paymentMode: 'Cash',
++    status: 'Pending Approval',
++  },
++  {
++    id: '4',
++    expenseCode: 'EXP-0004',
++    projectId: '4',
++    projectName: 'E-commerce Storefront',
++    category: 'Contractor Payout',
++    description: 'Freelance QA support — Sprint 6',
++    amount: 18000,
++    expenseDate: '2025-03-28',
++    vendor: 'Contractor — R. Menon',
++    paymentMode: 'Bank Transfer',
++    status: 'Reimbursed',
++  },
++  {
++    id: '5',
++    expenseCode: 'EXP-0005',
++    projectId: '5',
++    projectName: 'Site Billing & Inventory Tool',
++    category: 'Travel',
++    description: 'On-site client visit — Erode',
++    amount: 5400,
++    expenseDate: '2025-06-25',
++    vendor: 'Self',
++    paymentMode: 'Cash',
++    status: 'Rejected',
++  },
++];
++
++let nextId = SEED_EXPENSES.length + 1;
++
++function delay<T>(value: T, ms = 300): Promise<T> {
++  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
++}
++
++function nextExpenseCode(): string {
++  return `EXP-${String(nextId).padStart(4, '0')}`;
++}
++
++export async function getExpenses(params: ExpenseListParams): Promise<PaginatedResponse<Expense>> {
++  // TODO: replace with `const { data } = await axiosClient.get<PaginatedResponse<Expense>>('/expenses', { params }); return data;`
++  let rows = [...SEED_EXPENSES];
++
++  if (params.search) {
++    const q = params.search.toLowerCase();
++    rows = rows.filter(
++      (r) =>
++        r.expenseCode.toLowerCase().includes(q) ||
++        r.description.toLowerCase().includes(q) ||
++        r.vendor.toLowerCase().includes(q) ||
++        (r.projectName ?? '').toLowerCase().includes(q)
++    );
++  }
++
++  if (params.status) {
++    rows = rows.filter((r) => r.status === params.status);
++  }
++
++  if (params.category) {
++    rows = rows.filter((r) => r.category === params.category);
++  }
++
++  if (params.sortBy) {
++    const dir = params.sortDirection === 'desc' ? -1 : 1;
++    rows.sort((a, b) => {
++      const av = (a as unknown as Record<string, unknown>)[params.sortBy!];
++      const bv = (b as unknown as Record<string, unknown>)[params.sortBy!];
++      if (av == null || bv == null) return 0;
++      return av > bv ? dir : av < bv ? -dir : 0;
++    });
++  }
++
++  const totalEntries = rows.length;
++  const totalPages = Math.max(1, Math.ceil(totalEntries / params.pageSize));
++  const start = (params.page - 1) * params.pageSize;
++  const paged = rows.slice(start, start + params.pageSize);
++
++  return delay({
++    data: paged,
++    page: params.page,
++    pageSize: params.pageSize,
++    totalEntries,
++    totalPages,
++  });
++}
++
++export async function getExpenseById(id: string): Promise<Expense | undefined> {
++  // TODO: replace with `const { data } = await axiosClient.get<Expense>(`/expenses/${id}`); return data;`
++  return delay(SEED_EXPENSES.find((r) => r.id === id));
++}
++
++export async function createExpense(values: ExpenseFormValues): Promise<Expense> {
++  // TODO: replace with `const { data } = await axiosClient.post<Expense>('/expenses', values); return data;`
++  const project = values.projectId ? await getProjectById(values.projectId) : undefined;
++  const expense: Expense = {
++    id: String(nextId),
++    expenseCode: nextExpenseCode(),
++    ...values,
++    projectName: project?.projectName,
++  };
++  nextId += 1;
++  SEED_EXPENSES = [expense, ...SEED_EXPENSES];
++  return delay(expense);
++}
++
++export async function updateExpense(id: string, values: ExpenseFormValues): Promise<Expense> {
++  // TODO: replace with `const { data } = await axiosClient.put<Expense>(`/expenses/${id}`, values); return data;`
++  const project = values.projectId ? await getProjectById(values.projectId) : undefined;
++  SEED_EXPENSES = SEED_EXPENSES.map((r) =>
++    r.id === id ? { ...r, ...values, projectName: project?.projectName } : r
++  );
++  const updated = SEED_EXPENSES.find((r) => r.id === id)!;
++  return delay(updated);
++}
++
++export async function deleteExpense(id: string): Promise<void> {
++  // TODO: replace with `await axiosClient.delete(`/expenses/${id}`);`
++  SEED_EXPENSES = SEED_EXPENSES.filter((r) => r.id !== id);
++  return delay(undefined);
++}
+diff --git a/src/types/common.types.ts b/src/types/common.types.ts
+index 4741891..d3101bb 100644
+--- a/src/types/common.types.ts
++++ b/src/types/common.types.ts
+@@ -41,3 +41,4 @@ export type AmcStatus = 'Active' | 'Upcoming Renewal' | 'Expiring Soon' | 'Expir
+ export type QuotationStatus = 'Draft' | 'Sent' | 'Accepted' | 'Rejected' | 'Expired';
+ export type DebitNoteStatus = 'Open' | 'Applied' | 'Cancelled';
+ export type CreditNoteStatus = 'Open' | 'Applied' | 'Cancelled';
++export type ExpenseStatus = 'Pending Approval' | 'Approved' | 'Rejected' | 'Reimbursed';
+diff --git a/src/types/expense.types.ts b/src/types/expense.types.ts
+new file mode 100644
+index 0000000..0a8a2c2
+--- /dev/null
++++ b/src/types/expense.types.ts
+@@ -0,0 +1,55 @@
++/**
++ * Purpose: TypeScript types for the Expenses module (BRD Future Module: Expense Tracking — no
++ *          detailed field list was given, so this follows standard project-expense tracking
++ *          practice: category, vendor, amount, date, optional project link, approval status)
++ * Responsibilities: Single source of truth for the Expense entity shape, create/update payloads,
++ *                    and list-query params
++ * Dependencies: common.types (ExpenseStatus, PaginatedResponse)
++ * Export: Expense, ExpenseFormValues, ExpenseListParams
++ */
++import type { ExpenseStatus } from './common.types';
++
++export type ExpenseCategory =
++  | 'Travel'
++  | 'Software & Tools'
++  | 'Office Supplies'
++  | 'Hosting & Infrastructure'
++  | 'Contractor Payout'
++  | 'Marketing'
++  | 'Other';
++
++export interface Expense {
++  id: string;
++  expenseCode: string; // e.g. EXP-0001
++  projectId?: string;
++  projectName?: string; // denormalized for table display; optional — some expenses are overhead, not project-linked
++  category: ExpenseCategory;
++  description: string;
++  amount: number;
++  expenseDate: string; // ISO date
++  vendor: string;
++  paymentMode: string;
++  status: ExpenseStatus;
++}
++
++/** Shape used by the Add/Edit Expense form (React Hook Form + Zod) */
++export interface ExpenseFormValues {
++  projectId?: string;
++  category: ExpenseCategory;
++  description: string;
++  amount: number;
++  expenseDate: string;
++  vendor: string;
++  paymentMode: string;
++  status: ExpenseStatus;
++}
++
++export interface ExpenseListParams {
++  page: number;
++  pageSize: number;
++  search?: string;
++  status?: ExpenseStatus;
++  category?: ExpenseCategory;
++  sortBy?: string;
++  sortDirection?: 'asc' | 'desc';
++}
+-- 
+2.43.0
+
