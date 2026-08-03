@@ -1,6 +1,6 @@
 /**
- * Purpose: Global stylesheet — Tailwind layers + base document styles
- * Responsibilities: Font loading, scrollbar styling, focus-visible ring, base resets
+ * Purpose: Global stylesheet — Tailwind layers + base document styles + Dark Theme System
+ * Responsibilities: Font loading, scrollbar styling, focus-visible ring, base resets, Dark Mode overrides
  * Dependencies: Tailwind CSS
  */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -8,6 +8,18 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --bg-page: #0B0F17;
+  --bg-card: #131C2E;
+  --bg-subtle: #1E293B;
+  --border-subtle: #243044;
+  --text-primary: #F8FAFC;
+  --text-secondary: #CBD5E1;
+  --text-muted: #94A3B8;
+  --text-placeholder: #64748B;
+}
 
 @layer base {
   * {
@@ -17,15 +29,19 @@
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    background-color: var(--bg-page);
+    color: var(--text-primary);
   }
 
   body {
     @apply bg-surface-bg text-ink-900 font-sans antialiased;
+    background-color: var(--bg-page) !important;
+    color: var(--text-primary) !important;
   }
 
   /* Consistent keyboard focus ring across all interactive elements */
   :focus-visible {
-    @apply outline-none ring-2 ring-primary-500 ring-offset-2 ring-offset-white;
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2 ring-offset-slate-900;
   }
 
   ::-webkit-scrollbar {
@@ -36,10 +52,10 @@
     @apply bg-transparent;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-ink-400/40 rounded-full;
+    @apply bg-slate-700/60 rounded-full;
   }
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-ink-400/60;
+    @apply bg-slate-600;
   }
 }
 
@@ -49,3 +65,90 @@
     @apply bg-surface-card rounded-card shadow-card border border-surface-border;
   }
 }
+
+/* Dark Theme Overrides for hardcoded utility classes */
+html.dark .bg-white,
+html.dark .bg-surface-card {
+  background-color: var(--bg-card) !important;
+}
+
+html.dark .bg-surface-bg,
+html.dark .bg-slate-50,
+html.dark .bg-gray-50,
+html.dark .bg-slate-100 {
+  background-color: var(--bg-page) !important;
+}
+
+html.dark .bg-surface-subtle,
+html.dark .bg-slate-50\/80,
+html.dark .bg-slate-50\/60,
+html.dark .bg-slate-50\/40,
+html.dark .bg-slate-100\/60 {
+  background-color: var(--bg-subtle) !important;
+}
+
+html.dark .text-ink-900,
+html.dark .text-slate-900,
+html.dark .text-gray-900 {
+  color: var(--text-primary) !important;
+}
+
+html.dark .text-ink-700,
+html.dark .text-slate-800,
+html.dark .text-slate-700,
+html.dark .text-gray-700,
+html.dark .text-gray-800 {
+  color: var(--text-secondary) !important;
+}
+
+html.dark .text-ink-500,
+html.dark .text-slate-600,
+html.dark .text-slate-500,
+html.dark .text-gray-500,
+html.dark .text-gray-600 {
+  color: var(--text-muted) !important;
+}
+
+html.dark .border-surface-border,
+html.dark .border-slate-200,
+html.dark .border-slate-100,
+html.dark .border-gray-200,
+html.dark .border-\[\#E5E7EB\],
+html.dark .border-\[\#E2E8F0\] {
+  border-color: var(--border-subtle) !important;
+}
+
+html.dark .divide-surface-border,
+html.dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--border-subtle) !important;
+}
+
+/* Dark Mode Inputs, Selects, and Textareas */
+html.dark input,
+html.dark select,
+html.dark textarea {
+  background-color: #0F172A !important;
+  color: #F8FAFC !important;
+  border-color: var(--border-subtle) !important;
+}
+
+html.dark option {
+  background-color: #1E293B !important;
+  color: #F8FAFC !important;
+}
+
+/* Table Dark Theme */
+html.dark th {
+  background-color: #0F172A !important;
+  color: #94A3B8 !important;
+  border-color: var(--border-subtle) !important;
+}
+
+html.dark td {
+  border-color: var(--border-subtle) !important;
+}
+
+html.dark tr:hover td {
+  background-color: #1E293B/50 !important;
+}
+

@@ -12,7 +12,7 @@
  */
 import { useMemo, useState } from 'react';
 import type { ColumnDef, SortingState } from '@tanstack/react-table';
-import { Plus, Pencil, Trash2, FileMinus } from 'lucide-react';
+import { Plus, Pencil, Trash2, FileMinus, Eye } from 'lucide-react';
 import { PageHeader } from '../../../components/shared/PageHeader';
 import { SearchBar } from '../../../components/shared/SearchBar';
 import { FilterBar } from '../../../components/shared/FilterBar';
@@ -27,6 +27,7 @@ import { toast } from '../../../components/ui/Toast';
 import { formatCompactCurrency } from '../../../utils/formatCurrency';
 import { formatDate } from '../../../utils/formatDate';
 import { generateReceiptPDF } from '../../../utils/generateReceiptPdf';
+import { ReceiptPreviewModal } from '../../../components/shared/ReceiptPreviewModal';
 import {
   useReceiptVouchers,
   useCreateReceiptVoucher,
@@ -63,6 +64,8 @@ export default function ReceiptVouchersListPage() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingReceiptVoucher, setEditingReceiptVoucher] = useState<ReceiptVoucher | undefined>(undefined);
+  const [selectedReceiptVoucher, setSelectedReceiptVoucher] = useState<ReceiptVoucher | undefined>(undefined);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const clientOptionsQuery = useClientOptions();
 
@@ -170,6 +173,14 @@ export default function ReceiptVouchersListPage() {
         <div onClick={(e) => e.stopPropagation()}>
           <ActionMenu
             items={[
+              {
+                label: 'View Receipt',
+                icon: <Eye className="h-4 w-4 text-blue-600" />,
+                onClick: () => {
+                  setSelectedReceiptVoucher(row.original);
+                  setPreviewOpen(true);
+                },
+              },
               { label: 'Edit', icon: <Pencil className="h-4 w-4" />, onClick: () => openEditModal(row.original) },
               {
                 label: 'Download PDF',
@@ -294,6 +305,29 @@ export default function ReceiptVouchersListPage() {
         receiptVoucher={editingReceiptVoucher}
         onSubmit={handleFormSubmit}
         isSubmitting={createReceiptVoucher.isPending || updateReceiptVoucher.isPending}
+      />
+
+      <ReceiptPreviewModal
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        receipt={
+          selectedReceiptVoucher
+            ? {
+                receiptNo: selectedReceiptVoucher.receiptNo,
+                receiptDate: selectedReceiptVoucher.date,
+                companyName: 'Shine Craft Technologies',
+                companyTagline: 'Create | Code | Connect',
+                clientName: selectedReceiptVoucher.clientName,
+                clientAddress: 'No.20,\nFirst Floor,\nUruvaiyar Main Road,\nUruvaiyar,\nPuducherry - 605110',
+                paymentId: selectedReceiptVoucher.receiptNo.replace('RCP', 'PAY'),
+                invoiceNo: selectedReceiptVoucher.invoiceRef || 'INV-2026-044',
+                paymentMode: selectedReceiptVoucher.paymentMode,
+                referenceNo: selectedReceiptVoucher.referenceNo || 'UTR456789123456',
+                amountReceived: selectedReceiptVoucher.amount,
+                signatoryTitle: 'Authorised Signatory',
+              }
+            : undefined
+        }
       />
     </div>
   );

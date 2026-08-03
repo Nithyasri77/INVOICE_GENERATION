@@ -61,3 +61,66 @@ export function amountInWordsINR(amount: number): string {
   }
   return `${words} Only`;
 }
+
+/**
+ * Purpose: Convert numbers to Indian Rupees in words (e.g., 50000 -> "Fifty Thousand Only")
+ * Responsibilities: Handle units, tens, hundreds, thousands, lakhs, and crores.
+ */
+export function numberToWordsRupees(amount: number): string {
+  if (isNaN(amount) || amount === null || amount === undefined) return 'Zero Only';
+
+  const num = Math.floor(Math.abs(amount));
+  if (num === 0) return 'Zero Only';
+
+  const singleDigits = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+  const twoDigits = ['', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tensMultiple = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+  function convertTwoDigits(n: number): string {
+    if (n < 10) return singleDigits[n];
+    if (n >= 10 && n < 20) return twoDigits[n - 9];
+    const ten = Math.floor(n / 10);
+    const unit = n % 10;
+    return tensMultiple[ten] + (unit ? ' ' + singleDigits[unit] : '');
+  }
+
+  function convertThreeDigits(n: number): string {
+    const hundred = Math.floor(n / 100);
+    const rest = n % 100;
+    let str = '';
+    if (hundred) {
+      str += singleDigits[hundred] + ' Hundred';
+    }
+    if (rest) {
+      str += (str ? ' ' : '') + convertTwoDigits(rest);
+    }
+    return str;
+  }
+
+  let result = '';
+  let temp = num;
+
+  const crore = Math.floor(temp / 10000000);
+  temp %= 10000000;
+
+  const lakh = Math.floor(temp / 100000);
+  temp %= 100000;
+
+  const thousand = Math.floor(temp / 1000);
+  temp %= 1000;
+
+  if (crore) {
+    result += (result ? ' ' : '') + convertThreeDigits(crore) + ' Crore';
+  }
+  if (lakh) {
+    result += (result ? ' ' : '') + convertTwoDigits(lakh) + ' Lakh';
+  }
+  if (thousand) {
+    result += (result ? ' ' : '') + convertTwoDigits(thousand) + ' Thousand';
+  }
+  if (temp) {
+    result += (result ? ' ' : '') + convertThreeDigits(temp);
+  }
+
+  return result.trim() ? `${result.trim()} Only` : 'Zero Only';
+}

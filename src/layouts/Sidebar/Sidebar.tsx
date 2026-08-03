@@ -13,22 +13,20 @@ import { useSidebar } from '../../contexts/SidebarContext';
 import { SIDEBAR_NAV } from './sidebarConfig';
 import { SidebarItem } from './SidebarItem';
 import { UserMenu } from '../Topbar/UserMenu';
-
+import logo from '../../assets/shinecraft-logo (2).png';
 export function Sidebar() {
   const { isMobileOpen, closeMobile } = useSidebar();
 
   const content = (
     <div className="flex h-full flex-col bg-white">
       {/* Logo */}
-      <div className="flex items-center justify-between px-5 py-5">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-600 text-sm font-bold text-white">
-            SC
-          </div>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-bold text-ink-900">Shine Craft Technologies</p>
-            <p className="truncate text-[11px] text-ink-500">Craft | Code | Connect</p>
-          </div>
+      <div className="flex items-center justify-between px-5 py-4">
+        <div className="flex items-center">
+          <img
+            src={logo}
+            alt="Logo"
+            className="h-12 w-auto max-w-[180px] object-contain"
+          />
         </div>
         <button
           type="button"

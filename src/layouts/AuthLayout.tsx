@@ -6,19 +6,19 @@
  * Export: AuthLayout
  */
 import { Outlet } from 'react-router-dom';
+import logo from '../assets/shinecraft-logo (2).png';
 
 export function AuthLayout() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface-bg px-4">
       <div className="w-full max-w-md">
         <div className="mb-8 flex flex-col items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-600 text-lg font-bold text-white">
-            SC
-          </div>
-          <div className="text-center">
-            <p className="text-lg font-bold text-ink-900">Shine Craft Technologies</p>
-            <p className="text-xs text-ink-500">Craft | Code | Connect</p>
-          </div>
+          <img src={logo} alt="Shine Craft Technologies" className="h-12 w-12 rounded-lg object-contain" />
+          SC
+        </div>
+        <div className="text-center">
+          <p className="text-lg font-bold text-ink-900">Shine Craft Technologies</p>
+          <p className="text-xs text-ink-500">Craft | Code | Connect</p>
         </div>
 
         <div className="surface-card p-6">

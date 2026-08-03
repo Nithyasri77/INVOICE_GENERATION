@@ -16,8 +16,6 @@ import {
   CheckCircle2,
   Wallet,
   FileText,
-  Building2,
-  Check,
 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { StatCard } from '../../../components/ui/StatCard';
@@ -31,6 +29,8 @@ import { Select } from '../../../components/ui/Select';
 import { Input } from '../../../components/ui/Input';
 import { Modal, ModalBody, ModalFooter } from '../../../components/ui/Modal';
 import { Skeleton } from '../../../components/ui/Skeleton';
+import { ReceiptPreviewModal } from '../../../components/shared/ReceiptPreviewModal';
+import type { ReceiptData } from '../../../components/shared/ProfessionalReceipt';
 import { useTableState } from '../../../hooks/useTableState';
 import { useDisclosure } from '../../../hooks/useDisclosure';
 import { formatDate } from '../../../utils/formatDate';
@@ -76,6 +76,24 @@ export function ProjectReceiptsTab({ projectId }: ProjectReceiptsTabProps) {
     (paymentModeFilter ? 1 : 0) +
     (startDateFilter ? 1 : 0) +
     (endDateFilter ? 1 : 0);
+
+  const selectedReceiptData = useMemo<ReceiptData | undefined>(() => {
+    if (!selectedReceipt) return undefined;
+    return {
+      receiptNo: selectedReceipt.receiptNumber,
+      receiptDate: selectedReceipt.paymentDate || selectedReceipt.generatedDate,
+      companyName: 'Shine Craft Technologies',
+      companyTagline: 'Create | Code | Connect',
+      clientName: selectedReceipt.clientName || 'ABC Industries',
+      clientAddress: 'No.20,\nFirst Floor,\nUruvaiyar Main Road,\nUruvaiyar,\nPuducherry - 605110',
+      paymentId: selectedReceipt.transactionId ? `PAY-${selectedReceipt.transactionId}` : 'PAY-2026-030',
+      invoiceNo: selectedReceipt.invoiceNumber,
+      paymentMode: selectedReceipt.paymentMode,
+      referenceNo: selectedReceipt.transactionId || 'UTR456789123456',
+      amountReceived: selectedReceipt.amount,
+      signatoryTitle: 'Authorised Signatory',
+    };
+  }, [selectedReceipt]);
 
   const columns = useMemo<ColumnDef<ProjectReceipt, unknown>[]>(
     () => [
@@ -139,12 +157,18 @@ export function ProjectReceiptsTab({ projectId }: ProjectReceiptsTabProps) {
               {
                 label: 'Download PDF',
                 icon: <Download className="h-4 w-4" />,
-                onClick: () => toast.success(`Downloading PDF for ${row.original.receiptNumber}`),
+                onClick: () => {
+                  setSelectedReceipt(row.original);
+                  previewModal.open();
+                },
               },
               {
                 label: 'Print Receipt',
-                icon: <Printer className="h-4 w-4" />,
-                onClick: () => toast.success(`Preparing print layout for ${row.original.receiptNumber}`),
+                icon: <Printer className="h-4 w-4 text-slate-600" />,
+                onClick: () => {
+                  setSelectedReceipt(row.original);
+                  previewModal.open();
+                },
               },
               {
                 label: 'Email Receipt',
@@ -274,108 +298,12 @@ export function ProjectReceiptsTab({ projectId }: ProjectReceiptsTabProps) {
         />
       )}
 
-      {/* 4. Receipt Preview Modal (ERP Payment Voucher Layout) */}
-      {selectedReceipt && (
-        <Modal open={previewModal.isOpen} onOpenChange={previewModal.close} title={`Official Payment Receipt — ${selectedReceipt.receiptNumber}`} size="lg">
-          <ModalBody className="space-y-6 p-2">
-            {/* Voucher Document Box */}
-            <div className="rounded-xl border border-surface-border bg-white p-6 shadow-sm space-y-6 text-sm">
-              {/* Header: Company & Receipt Meta */}
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-surface-border pb-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-600 text-white font-bold">
-                    <Building2 className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-ink-900 text-base">Shine Craft Billing ERP</h3>
-                    <p className="text-xs text-ink-500">Official Payment Voucher & Receipt</p>
-                  </div>
-                </div>
-
-                <div className="text-right">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-success-50 px-3 py-1 text-xs font-semibold text-success-700">
-                    <Check className="h-3.5 w-3.5" /> PAYMENT RECEIVED
-                  </span>
-                  <p className="text-xs text-ink-400 mt-1">Generated: {formatDate(selectedReceipt.generatedDate)}</p>
-                </div>
-              </div>
-
-              {/* Grid: Client & Payment Details */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 text-xs rounded-lg bg-surface-subtle p-4 border border-surface-border/60">
-                <div>
-                  <p className="text-ink-500 font-medium">Received From:</p>
-                  <p className="font-bold text-ink-900 text-sm">{selectedReceipt.clientName}</p>
-                  <p className="text-ink-600 mt-1">Invoice Ref: <strong>{selectedReceipt.invoiceNumber}</strong></p>
-                </div>
-
-                <div className="space-y-1 sm:text-right">
-                  <p className="text-ink-500 font-medium">Receipt Voucher No:</p>
-                  <p className="font-mono font-bold text-ink-900 text-sm">{selectedReceipt.receiptNumber}</p>
-                  <p className="text-ink-600">Payment Date: <strong>{formatDate(selectedReceipt.paymentDate)}</strong></p>
-                </div>
-              </div>
-
-              {/* Transaction Breakdown Table */}
-              <div className="rounded-lg border border-surface-border overflow-hidden">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-surface-bg border-b border-surface-border font-semibold text-ink-600 uppercase tracking-wider">
-                    <tr>
-                      <th className="px-4 py-2.5">Description</th>
-                      <th className="px-4 py-2.5">Mode</th>
-                      <th className="px-4 py-2.5">Transaction UTR / Ref</th>
-                      <th className="px-4 py-2.5 text-right">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-surface-border">
-                    <tr>
-                      <td className="px-4 py-3 font-medium text-ink-900">
-                        Payment towards Invoice {selectedReceipt.invoiceNumber}
-                      </td>
-                      <td className="px-4 py-3 text-ink-700">{selectedReceipt.paymentMode}</td>
-                      <td className="px-4 py-3 font-mono text-ink-600">{selectedReceipt.transactionId || 'N/A'}</td>
-                      <td className="px-4 py-3 text-right font-bold text-success-700 text-sm">
-                        {formatCurrency(selectedReceipt.amount)}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Total & Authorization Footer */}
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-t border-surface-border pt-4">
-                <div className="text-xs text-ink-500 space-y-1">
-                  <p>Computer generated payment receipt. Valid without signature.</p>
-                  <p>Thank you for your business!</p>
-                </div>
-
-                <div className="rounded-lg bg-surface-subtle p-3 text-right">
-                  <span className="text-xs text-ink-500">Total Net Amount:</span>
-                  <div className="text-xl font-extrabold text-primary-700">
-                    {formatCurrency(selectedReceipt.amount)}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button
-              variant="secondary"
-              leftIcon={<Download className="h-4 w-4" />}
-              onClick={() => toast.success(`Downloading PDF for ${selectedReceipt.receiptNumber}`)}
-            >
-              Download PDF
-            </Button>
-            <Button
-              variant="secondary"
-              leftIcon={<Printer className="h-4 w-4" />}
-              onClick={() => toast.success(`Printing receipt ${selectedReceipt.receiptNumber}...`)}
-            >
-              Print
-            </Button>
-            <Button onClick={previewModal.close}>Close Preview</Button>
-          </ModalFooter>
-        </Modal>
-      )}
+      {/* 4. Official Professional Receipt Preview Modal */}
+      <ReceiptPreviewModal
+        open={previewModal.isOpen}
+        onOpenChange={previewModal.close}
+        receipt={selectedReceiptData}
+      />
 
       {/* 5. Email Receipt Modal */}
       <Modal open={emailModal.isOpen} onOpenChange={emailModal.close} title="Email Receipt to Client">
