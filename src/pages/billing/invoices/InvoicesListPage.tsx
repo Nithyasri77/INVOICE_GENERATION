@@ -10,11 +10,11 @@
  */
 import { useMemo, useState } from 'react';
 import type { ColumnDef, SortingState } from '@tanstack/react-table';
-import { Plus, Pencil, Trash2, Receipt } from 'lucide-react';
+import { Plus, Pencil, Trash2, Receipt, Send, Eye } from 'lucide-react';
 import { PageHeader } from '../../../components/shared/PageHeader';
 import { SearchBar } from '../../../components/shared/SearchBar';
 import { FilterBar } from '../../../components/shared/FilterBar';
-import { ActionMenu } from '../../../components/shared/ActionMenu';
+import { ActionMenu, type ActionMenuItem } from '../../../components/shared/ActionMenu';
 import { StatusBadge } from '../../../components/shared/StatusBadge';
 import { ExportButton, type ExportFormat } from '../../../components/shared/ExportButton';
 import { DataTable } from '../../../components/ui/Table';
@@ -32,6 +32,8 @@ import {
   useProjectOptions,
 } from '../../../features/invoices/hooks/useInvoices';
 import { InvoiceFormModal } from '../../../features/invoices/components/InvoiceFormModal';
+import { InvoicePreviewModal } from '../../../components/shared/InvoicePreviewModal';
+import { PaymentReminderModal } from '../../../components/shared/PaymentReminderModal';
 import type { Invoice, InvoiceFormValues } from '../../../types/invoice.types';
 import type { InvoiceStatus } from '../../../types/common.types';
 
@@ -54,6 +56,12 @@ export default function InvoicesListPage() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<Invoice | undefined>(undefined);
+
+  // Invoice preview and reminder modal state
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewInvoice, setPreviewInvoice] = useState<Invoice | undefined>(undefined);
+  const [reminderOpen, setReminderOpen] = useState(false);
+  const [selectedInvoiceForReminder, setSelectedInvoiceForReminder] = useState<Invoice | undefined>(undefined);
 
   const projectOptionsQuery = useProjectOptions();
 
@@ -86,6 +94,16 @@ export default function InvoicesListPage() {
   function openEditModal(invoice: Invoice) {
     setEditingInvoice(invoice);
     setFormOpen(true);
+  }
+
+  function openInvoicePreview(invoice: Invoice) {
+    setPreviewInvoice(invoice);
+    setPreviewOpen(true);
+  }
+
+  function openReminderModal(invoice: Invoice) {
+    setSelectedInvoiceForReminder(invoice);
+    setReminderOpen(true);
   }
 
   function handleFormSubmit(values: InvoiceFormValues) {
@@ -148,32 +166,77 @@ export default function InvoicesListPage() {
       cell: ({ getValue }) => <StatusBadge status={getValue() as string} />,
     },
     {
+      id: 'reminderAction',
+      header: 'Payment Reminder',
+      cell: ({ row }) => {
+        const inv = row.original;
+        const isPaid = inv.status === 'Paid';
+        if (isPaid) return <span className="text-xs text-slate-400 font-medium">Fully Paid</span>;
+
+        return (
+          <Button
+            size="sm"
+            variant="secondary"
+            className="border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 font-semibold shadow-2xs text-xs py-1 px-2.5"
+            leftIcon={<Send className="h-3 w-3 text-amber-600" />}
+            onClick={(e) => {
+              e.stopPropagation();
+              openReminderModal(inv);
+            }}
+          >
+            Payment Pending Reminder
+          </Button>
+        );
+      },
+    },
+    {
       id: 'actions',
       header: '',
-      cell: ({ row }) => (
-        <div onClick={(e) => e.stopPropagation()}>
-          <ActionMenu
-            items={[
-              { label: 'Edit', icon: <Pencil className="h-4 w-4" />, onClick: () => openEditModal(row.original) },
-              {
-                label: 'Download PDF',
-                icon: <Receipt className="h-4 w-4" />,
-                onClick: () => {
-                  generateInvoicePDF(row.original);
-                  toast.success(`Downloading ${row.original.invoiceNo}.pdf`);
-                },
-              },
-              {
-                label: 'Delete',
-                icon: <Trash2 className="h-4 w-4" />,
-                destructive: true,
-                separatorBefore: true,
-                onClick: () => handleDelete(row.original),
-              },
-            ]}
-          />
-        </div>
-      ),
+      cell: ({ row }) => {
+        const inv = row.original;
+        const isPaid = inv.status === 'Paid';
+
+        const items: ActionMenuItem[] = [
+          {
+            label: 'View Invoice',
+            icon: <Eye className="h-4 w-4 text-blue-600" />,
+            onClick: () => openInvoicePreview(inv),
+          },
+        ];
+
+        if (!isPaid) {
+          items.push({
+            label: 'Payment Pending Reminder',
+            icon: <Send className="h-4 w-4 text-amber-600" />,
+            onClick: () => openReminderModal(inv),
+          });
+        }
+
+        items.push(
+          { label: 'Edit', icon: <Pencil className="h-4 w-4" />, onClick: () => openEditModal(inv) },
+          {
+            label: 'Download PDF',
+            icon: <Receipt className="h-4 w-4" />,
+            onClick: () => {
+              generateInvoicePDF(inv);
+              toast.success(`Downloading ${inv.invoiceNo}.pdf`);
+            },
+          },
+          {
+            label: 'Delete',
+            icon: <Trash2 className="h-4 w-4" />,
+            destructive: true,
+            separatorBefore: true,
+            onClick: () => handleDelete(inv),
+          }
+        );
+
+        return (
+          <div onClick={(e) => e.stopPropagation()}>
+            <ActionMenu items={items} />
+          </div>
+        );
+      },
     },
   ];
 
@@ -268,6 +331,21 @@ export default function InvoicesListPage() {
         onSubmit={handleFormSubmit}
         isSubmitting={createInvoice.isPending || updateInvoice.isPending}
       />
+
+      {/* Invoice Preview Modal */}
+      <InvoicePreviewModal
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        invoice={previewInvoice}
+      />
+
+      {/* Payment Reminder Modal */}
+      <PaymentReminderModal
+        open={reminderOpen}
+        onOpenChange={setReminderOpen}
+        invoice={selectedInvoiceForReminder}
+      />
     </div>
   );
 }
+
