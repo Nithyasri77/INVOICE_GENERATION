@@ -1,6 +1,7 @@
 /**
  * Purpose: Utility helper to resolve full Client details for Invoices and Payments Received
- * Responsibilities: Map client company names or IDs to phone, email, address, and GSTIN from SEED/API data
+ * Responsibilities: Map client company names, invoice numbers, or project names to phone, email, address, and GSTIN
+ * Rules: NO hardcoded dummy fallback phone numbers or fake fallback emails when client info is missing.
  */
 import type { Client } from '../types/client.types';
 
@@ -47,15 +48,91 @@ export const CLIENT_DATABASE: Record<string, Partial<Client>> = {
   },
 };
 
-export function getClientInfoByName(clientName: string): Partial<Client> {
-  if (CLIENT_DATABASE[clientName]) {
-    return CLIENT_DATABASE[clientName];
+// Project & Invoice mappings to handle any indirect lookup
+const PROJECT_TO_CLIENT_MAP: Record<string, string> = {
+  'ERP Revamp — Phase 1': 'Aravind Textiles Pvt Ltd',
+  'Patient Portal Redesign': 'Nithya Health Solutions',
+  'Fleet Tracking Dashboard': 'Prime Logistics Corp',
+  'E-commerce Storefront': 'BlueWave Retail',
+  'Site Billing & Inventory Tool': 'Karthik Constructions',
+};
+
+const INVOICE_TO_CLIENT_MAP: Record<string, string> = {
+  'INV-2025-001': 'Aravind Textiles Pvt Ltd',
+  'INV-2025-002': 'Aravind Textiles Pvt Ltd',
+  'INV-2025-003': 'Nithya Health Solutions',
+  'INV-2025-004': 'BlueWave Retail',
+  'INV-2025-005': 'Prime Logistics Corp',
+  'INV-2025-006': 'Karthik Constructions',
+};
+
+export function registerClientInfo(client: Partial<Client>) {
+  if (client.companyName) {
+    CLIENT_DATABASE[client.companyName] = {
+      ...CLIENT_DATABASE[client.companyName],
+      ...client,
+    };
   }
+}
+
+export function getClientInfoByName(
+  clientNameOrQuery?: string,
+  invoiceNo?: string,
+  projectName?: string
+): Partial<Client> {
+  // Direct match by client name
+  if (clientNameOrQuery && CLIENT_DATABASE[clientNameOrQuery]) {
+    return CLIENT_DATABASE[clientNameOrQuery];
+  }
+
+  // Case-insensitive match
+  if (clientNameOrQuery) {
+    const lowerQuery = clientNameOrQuery.toLowerCase().trim();
+    const matchedKey = Object.keys(CLIENT_DATABASE).find(
+      (key) => key.toLowerCase().trim() === lowerQuery
+    );
+    if (matchedKey) {
+      return CLIENT_DATABASE[matchedKey];
+    }
+  }
+
+  // Match by invoice number if available
+  if (invoiceNo && INVOICE_TO_CLIENT_MAP[invoiceNo]) {
+    const matchedClient = INVOICE_TO_CLIENT_MAP[invoiceNo];
+    if (CLIENT_DATABASE[matchedClient]) {
+      return CLIENT_DATABASE[matchedClient];
+    }
+  }
+
+  // Match by project name if available
+  if (projectName && PROJECT_TO_CLIENT_MAP[projectName]) {
+    const matchedClient = PROJECT_TO_CLIENT_MAP[projectName];
+    if (CLIENT_DATABASE[matchedClient]) {
+      return CLIENT_DATABASE[matchedClient];
+    }
+  }
+
+  // Check if clientNameOrQuery itself matches a project name or invoice number
+  if (clientNameOrQuery && PROJECT_TO_CLIENT_MAP[clientNameOrQuery]) {
+    const matchedClient = PROJECT_TO_CLIENT_MAP[clientNameOrQuery];
+    if (CLIENT_DATABASE[matchedClient]) {
+      return CLIENT_DATABASE[matchedClient];
+    }
+  }
+
+  if (clientNameOrQuery && INVOICE_TO_CLIENT_MAP[clientNameOrQuery]) {
+    const matchedClient = INVOICE_TO_CLIENT_MAP[clientNameOrQuery];
+    if (CLIENT_DATABASE[matchedClient]) {
+      return CLIENT_DATABASE[matchedClient];
+    }
+  }
+
+  // Do NOT hardcode dummy phone numbers or fake emails!
   return {
-    companyName: clientName,
-    contactPerson: 'Accounts Team',
-    phone: '+91 98765 00000',
-    email: `accounts@${clientName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`,
-    address: 'Corporate Office Address',
+    companyName: clientNameOrQuery || 'Valued Client',
+    contactPerson: undefined,
+    phone: undefined,
+    email: undefined,
+    address: undefined,
   };
 }

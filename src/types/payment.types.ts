@@ -16,6 +16,7 @@ export interface Payment {
   invoiceNo: string; // denormalized for table display
   projectId: string;
   projectName: string; // denormalized for table display
+  clientName?: string; // denormalized for client lookup & reminders
   amount: number;
   paymentDate: string; // ISO date
   mode: PaymentMode;

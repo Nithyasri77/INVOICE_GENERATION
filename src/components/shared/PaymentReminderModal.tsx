@@ -2,14 +2,15 @@
  * Purpose: Payment Pending Reminder Modal Component
  * Responsibilities:
  * - Render polite payment reminder popup for Pending, Part Paid, or Overdue invoices/payments
- * - Provide Option 1: WhatsApp sharing (via wa.me link with prefilled dynamic message)
- * - Provide Option 2: Email sharing (via mailto: link with prefilled recipient, subject, and body)
+ * - Provide Option 1: WhatsApp sharing (via wa.me link with normalized recipient phone & dynamic message)
+ * - Provide Option 2: Email sharing (via mailto: link with recipient email, subject, and body)
+ * - Display Client Verification details before sharing (Client Name, Phone, Email, Invoice No, Pending Amount, Due Date)
+ * - Validate Phone & Email to ensure no silent default/dummy fallbacks and show user-friendly error notifications
  * - Option to copy message text to clipboard
- * - Informative notification regarding backend SMTP/API configuration for direct automated emailing
- * Dependencies: Modal, ModalBody, ModalFooter, Button, Input, Textarea, Toast, formatCurrency, formatDate
+ * Dependencies: Modal, ModalBody, ModalFooter, Button, Input, Textarea, Toast, formatCurrency, formatDate, phoneUtils, clientHelper
  */
-import { useState } from 'react';
-import { Send, Mail, Copy, Check, ExternalLink, Info, AlertTriangle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Send, Mail, Copy, Check, ExternalLink, Info, AlertTriangle, UserCheck, ShieldAlert } from 'lucide-react';
 import { Modal, ModalBody, ModalFooter } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -18,6 +19,7 @@ import { toast } from '../ui/Toast';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatDate } from '../../utils/formatDate';
 import { getClientInfoByName } from '../../utils/clientHelper';
+import { normalizePhoneNumber, isValidWhatsAppPhone, isValidEmail } from '../../utils/phoneUtils';
 import type { Invoice } from '../../types/invoice.types';
 import type { Payment } from '../../types/payment.types';
 
@@ -39,11 +41,9 @@ export function PaymentReminderModal({
   const [activeTab, setActiveTab] = useState<'whatsapp' | 'email'>('whatsapp');
   const [copied, setCopied] = useState(false);
 
-  if (!invoice && !payment) return null;
-
-  // Resolve invoice details
+  // Dynamic fields
   const invoiceNo = invoice?.invoiceNo || payment?.invoiceNo || 'INV-2025-001';
-  const clientName = invoice?.clientName || payment?.projectName?.split('—')[0]?.trim() || 'Valued Client';
+  const clientName = invoice?.clientName || payment?.clientName || payment?.projectName?.split('—')[0]?.trim() || 'Valued Client';
   const invoiceDate = invoice?.invoiceDate || payment?.paymentDate || '2025-02-05';
   const dueDate = invoice?.dueDate || payment?.paymentDate || '2025-02-15';
 
@@ -53,7 +53,7 @@ export function PaymentReminderModal({
   if (invoice?.status === 'Paid') {
     amountPaid = totalAmount;
   } else if (invoice?.status === 'Part Paid') {
-    amountPaid = Math.round(totalAmount * 0.5); // Default demo part paid if not specified
+    amountPaid = Math.round(totalAmount * 0.5);
   } else if (payment && payment.status === 'Reconciled') {
     amountPaid = payment.amount;
   }
@@ -62,13 +62,14 @@ export function PaymentReminderModal({
   const status = invoice?.status || (payment?.status === 'Pending' ? 'Pending' : 'Overdue');
   const isOverdue = status === 'Overdue' || new Date(dueDate) < new Date();
 
-  // Resolve client contact details
-  const clientInfo = getClientInfoByName(clientName);
-  const clientEmail = clientInfo.email || `accounts@${clientName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`;
-  const clientPhone = clientInfo.phone || '+91 98765 43210';
+  // Resolve real client contact details dynamically
+  const projectName = payment?.projectName || invoice?.projectName;
+  const clientInfo = getClientInfoByName(clientName, invoiceNo, projectName);
+  const displayClientName = clientInfo.companyName || clientName;
+  const defaultEmail = clientInfo.email || '';
+  const defaultPhone = clientInfo.phone || '';
 
-  // Construct dynamic reminder message
-  const reminderMessage = `Dear ${clientInfo.contactPerson || clientName},
+  const defaultMessage = `Dear ${clientInfo.contactPerson || displayClientName},
 
 This is a friendly reminder regarding the pending payment for Invoice #${invoiceNo}.
 
@@ -81,33 +82,58 @@ ${isOverdue ? 'Note: This payment is currently overdue. ' : ''}Kindly arrange th
 Thank you,
 ${companyName}`;
 
+  // Editable local state for custom phone numbers / email / message
+  const [phone, setPhone] = useState(defaultPhone);
+  const [email, setEmail] = useState(defaultEmail);
+  const [message, setMessage] = useState(defaultMessage);
+
+  useEffect(() => {
+    if (open) {
+      setPhone(defaultPhone);
+      setEmail(defaultEmail);
+      setMessage(defaultMessage);
+    }
+  }, [open, defaultPhone, defaultEmail, defaultMessage]);
+
+  if (!invoice && !payment) return null;
+
   const emailSubject = `Payment Reminder – Invoice #${invoiceNo}`;
+
+  // Phone and Email Validations
+  const isPhoneValid = isValidWhatsAppPhone(phone);
+  const isEmailValid = isValidEmail(email);
+  const normalizedPhone = normalizePhoneNumber(phone);
 
   // WhatsApp click handler
   const handleShareWhatsApp = () => {
-    const cleanPhone = clientPhone.replace(/[^0-9]/g, '');
-    const encodedMsg = encodeURIComponent(reminderMessage);
-    const waUrl = cleanPhone
-      ? `https://wa.me/${cleanPhone}?text=${encodedMsg}`
-      : `https://api.whatsapp.com/send?text=${encodedMsg}`;
+    if (!isPhoneValid) {
+      toast.error('WhatsApp reminder cannot be sent because this client does not have a phone number.');
+      return;
+    }
+    const encodedMsg = encodeURIComponent(message);
+    const waUrl = `https://wa.me/${normalizedPhone}?text=${encodedMsg}`;
 
     window.open(waUrl, '_blank');
-    toast.success('Opening WhatsApp with payment reminder message');
+    toast.success(`Opening WhatsApp for +${normalizedPhone}`);
   };
 
   // Email click handler
   const handleSendEmail = () => {
-    const mailtoUrl = `mailto:${encodeURIComponent(clientEmail)}?subject=${encodeURIComponent(
+    if (!isEmailValid) {
+      toast.error('Email reminder cannot be sent because this client does not have an email address.');
+      return;
+    }
+    const mailtoUrl = `mailto:${encodeURIComponent(email.trim())}?subject=${encodeURIComponent(
       emailSubject
-    )}&body=${encodeURIComponent(reminderMessage)}`;
+    )}&body=${encodeURIComponent(message)}`;
 
     window.location.href = mailtoUrl;
-    toast.success('Opening mail client with prefilled payment reminder');
+    toast.success(`Opening mail client for ${email.trim()}`);
   };
 
   // Copy to clipboard handler
   const handleCopyText = () => {
-    navigator.clipboard.writeText(reminderMessage);
+    navigator.clipboard.writeText(message);
     setCopied(true);
     toast.success('Payment reminder copied to clipboard');
     setTimeout(() => setCopied(false), 2500);
@@ -118,24 +144,48 @@ ${companyName}`;
       open={open}
       onOpenChange={onOpenChange}
       title="Payment Pending Reminder"
-      description={`Send payment reminder to ${clientName} for Invoice #${invoiceNo}`}
+      description={`Verify client contact details and send reminder for Invoice #${invoiceNo}`}
       size="lg"
     >
       <ModalBody className="space-y-5">
-        {/* Payment Status Summary Card */}
-        <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/80 pb-2.5">
-            <div>
-              <span className="text-xs font-semibold text-slate-500 block">Client Name</span>
-              <span className="text-sm font-extrabold text-slate-900">{clientName}</span>
+        {/* Client & Payment Verification Banner */}
+        <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-4 space-y-3 shadow-2xs">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+            <div className="flex items-center gap-2">
+              <UserCheck className="h-4 w-4 text-blue-600" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                Verified Client Contact & Invoice Details
+              </span>
             </div>
-            <div className="text-right">
-              <span className="text-xs font-semibold text-slate-500 block">Invoice Number</span>
-              <span className="text-sm font-mono font-bold text-blue-700">{invoiceNo}</span>
+            <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+              {invoiceNo}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div>
+              <span className="text-slate-500 font-medium block">Client Company:</span>
+              <span className="font-extrabold text-slate-900 text-sm">{displayClientName}</span>
+            </div>
+            <div>
+              <span className="text-slate-500 font-medium block">Attention / Contact Person:</span>
+              <span className="font-semibold text-slate-800">{clientInfo.contactPerson || 'Accounts Team'}</span>
+            </div>
+            <div>
+              <span className="text-slate-500 font-medium block">WhatsApp Phone:</span>
+              <span className={`font-mono font-bold ${isPhoneValid ? 'text-emerald-700' : 'text-rose-600 font-semibold'}`}>
+                {phone ? phone : 'No phone number available'}
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-500 font-medium block">Email Address:</span>
+              <span className={`font-mono font-bold ${isEmailValid ? 'text-blue-700' : 'text-rose-600 font-semibold'}`}>
+                {email ? email : 'No email address available'}
+              </span>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-xs">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-xs pt-2 border-t border-slate-200/80">
             <div>
               <span className="text-slate-500 block font-medium">Invoice Date</span>
               <span className="font-semibold text-slate-800">{formatDate(invoiceDate)}</span>
@@ -195,18 +245,35 @@ ${companyName}`;
         {/* WhatsApp Tab View */}
         {activeTab === 'whatsapp' && (
           <div className="space-y-3">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-slate-700">Client WhatsApp Phone Number:</span>
-              <span className="font-mono font-bold text-slate-900">{clientPhone}</span>
-            </div>
+            <Input
+              label="Recipient WhatsApp Phone Number"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+91 91234 56789"
+              className="text-xs font-mono"
+            />
+
+            {/* Validation Notice if Phone is Missing / Invalid */}
+            {!isPhoneValid ? (
+              <div className="flex items-start gap-2 rounded-lg bg-rose-50 border border-rose-200 p-3 text-xs text-rose-800">
+                <ShieldAlert className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                <span>
+                  <strong>WhatsApp reminder cannot be sent because this client does not have a phone number.</strong> Please update the client&apos;s phone number to send WhatsApp reminders.
+                </span>
+              </div>
+            ) : (
+              <div className="text-[11px] text-emerald-800 font-mono bg-emerald-50/70 p-2 rounded border border-emerald-200">
+                Normalized WhatsApp recipient: <strong>+{normalizedPhone}</strong>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-slate-700">Dynamic WhatsApp Message:</label>
               <Textarea
                 rows={7}
-                readOnly
-                value={reminderMessage}
-                className="font-sans text-xs leading-relaxed bg-slate-50 border-slate-200 text-slate-800"
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                className="font-sans text-xs leading-relaxed border-slate-200 text-slate-800"
               />
             </div>
           </div>
@@ -217,10 +284,22 @@ ${companyName}`;
           <div className="space-y-3">
             <Input
               label="Recipient Email"
-              value={clientEmail}
-              readOnly
-              className="text-xs font-mono bg-slate-50"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="client@company.com"
+              className="text-xs font-mono"
             />
+
+            {/* Validation Notice if Email is Missing / Invalid */}
+            {!isEmailValid && (
+              <div className="flex items-start gap-2 rounded-lg bg-rose-50 border border-rose-200 p-3 text-xs text-rose-800">
+                <ShieldAlert className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                <span>
+                  <strong>Email reminder cannot be sent because this client does not have an email address.</strong> Please update the client&apos;s email address to send email reminders.
+                </span>
+              </div>
+            )}
+
             <Input
               label="Email Subject"
               value={emailSubject}
@@ -231,9 +310,9 @@ ${companyName}`;
               <label className="text-xs font-semibold text-slate-700">Email Body:</label>
               <Textarea
                 rows={6}
-                readOnly
-                value={reminderMessage}
-                className="font-sans text-xs leading-relaxed bg-slate-50 border-slate-200 text-slate-800"
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                className="font-sans text-xs leading-relaxed border-slate-200 text-slate-800"
               />
             </div>
 
@@ -267,7 +346,8 @@ ${companyName}`;
             <Button
               type="button"
               size="sm"
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+              disabled={!isPhoneValid}
+              className={`font-bold text-white ${isPhoneValid ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-300 opacity-60 cursor-not-allowed'}`}
               leftIcon={<Send className="h-4 w-4" />}
               rightIcon={<ExternalLink className="h-3.5 w-3.5 opacity-80" />}
               onClick={handleShareWhatsApp}
@@ -278,7 +358,8 @@ ${companyName}`;
             <Button
               type="button"
               size="sm"
-              className="bg-blue-600 hover:bg-blue-700 text-white font-bold"
+              disabled={!isEmailValid}
+              className={`font-bold text-white ${isEmailValid ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-300 opacity-60 cursor-not-allowed'}`}
               leftIcon={<Mail className="h-4 w-4" />}
               onClick={handleSendEmail}
             >

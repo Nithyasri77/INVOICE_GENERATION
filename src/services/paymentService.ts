@@ -27,6 +27,7 @@ let SEED_PAYMENTS: Payment[] = [
     invoiceNo: 'INV-2025-001',
     projectId: '1',
     projectName: 'ERP Revamp — Phase 1',
+    clientName: 'Aravind Textiles Pvt Ltd',
     amount: 200600,
     paymentDate: '2025-02-14',
     mode: 'Bank Transfer',
@@ -41,6 +42,7 @@ let SEED_PAYMENTS: Payment[] = [
     invoiceNo: 'INV-2025-002',
     projectId: '1',
     projectName: 'ERP Revamp — Phase 1',
+    clientName: 'Aravind Textiles Pvt Ltd',
     amount: 401200,
     paymentDate: '2025-05-24',
     mode: 'Bank Transfer',
@@ -55,6 +57,7 @@ let SEED_PAYMENTS: Payment[] = [
     invoiceNo: 'INV-2025-003',
     projectId: '2',
     projectName: 'Patient Portal Redesign',
+    clientName: 'Nithya Health Solutions',
     amount: 40000,
     paymentDate: '2025-04-29',
     mode: 'UPI',
@@ -69,6 +72,7 @@ let SEED_PAYMENTS: Payment[] = [
     invoiceNo: 'INV-2025-004',
     projectId: '4',
     projectName: 'E-commerce Storefront',
+    clientName: 'BlueWave Retail',
     amount: 346920,
     paymentDate: '2025-04-04',
     mode: 'Cheque',
@@ -83,6 +87,7 @@ let SEED_PAYMENTS: Payment[] = [
     invoiceNo: 'INV-2025-006',
     projectId: '5',
     projectName: 'Site Billing & Inventory Tool',
+    clientName: 'Karthik Constructions',
     amount: 70800,
     paymentDate: '2025-07-09',
     mode: 'UPI',
@@ -113,6 +118,7 @@ export async function getPayments(params: PaymentListParams): Promise<PaginatedR
         r.paymentCode.toLowerCase().includes(q) ||
         r.invoiceNo.toLowerCase().includes(q) ||
         r.projectName.toLowerCase().includes(q) ||
+        (r.clientName && r.clientName.toLowerCase().includes(q)) ||
         r.referenceNumber.toLowerCase().includes(q)
     );
   }
@@ -170,6 +176,7 @@ export async function createPayment(values: PaymentFormValues): Promise<Payment>
     invoiceNo: invoice?.invoiceNo ?? 'Unknown Invoice',
     projectId: invoice?.projectId ?? '',
     projectName: invoice?.projectName ?? 'Unknown Project',
+    clientName: invoice?.clientName ?? 'Unknown Client',
   };
   nextId += 1;
   SEED_PAYMENTS = [payment, ...SEED_PAYMENTS];
@@ -205,6 +212,7 @@ export async function updatePayment(id: string, values: PaymentFormValues): Prom
           invoiceNo: invoice?.invoiceNo ?? r.invoiceNo,
           projectId: invoice?.projectId ?? r.projectId,
           projectName: invoice?.projectName ?? r.projectName,
+          clientName: invoice?.clientName ?? r.clientName,
         }
       : r
   );
