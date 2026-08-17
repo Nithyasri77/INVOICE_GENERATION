@@ -1,0 +1,376 @@
+From 2996d95cb81a494fefc069c088969cf7f2f149f3 Mon Sep 17 00:00:00 2001
+From: Adhi <adhi@shinecraft.dev>
+Date: Mon, 17 Aug 2026 07:04:45 +0000
+Subject: [PATCH 1/2] Fix Payment Reminder & Company Invoice: resolve client
+ contact info from live Clients module data
+
+- Payment reminder (WhatsApp/email) and the new Company Invoice preview/PDF were pulling
+  client phone/email/GST/address from a separate hardcoded CLIENT_DATABASE copy in
+  clientHelper.ts, disconnected from the actual Clients module (clientService.ts).
+- Any client added or edited via the Clients module was invisible to these features, so
+  the reminder button stayed disabled ('no phone number available') and the new invoice
+  design showed a blank client block for anyone outside the 5 original demo clients.
+- Added useAllClients() hook (Clients module) as the single live source of client data.
+- Rewrote clientHelper.getClientInfoByName to resolve against that live client list instead
+  of a stale duplicate, keeping only the invoice/project -> company-name lookup maps for
+  legacy demo records.
+- Wired useAllClients() into PaymentReminderModal, InvoicePreviewModal, and
+  generateInvoicePdf.ts (Export PDF button on Invoices list) so all three consumers stay
+  in sync with the Clients module automatically.
+---
+ src/components/shared/InvoicePreviewModal.tsx |   6 +-
+ .../shared/PaymentReminderModal.tsx           |   7 +-
+ src/features/clients/hooks/useClients.ts      |  17 ++-
+ .../billing/invoices/InvoicesListPage.tsx     |   4 +-
+ src/utils/clientHelper.ts                     | 140 ++++++------------
+ src/utils/generateInvoicePdf.ts               |  10 +-
+ 6 files changed, 82 insertions(+), 102 deletions(-)
+
+diff --git a/src/components/shared/InvoicePreviewModal.tsx b/src/components/shared/InvoicePreviewModal.tsx
+index be74e47..4bac443 100644
+--- a/src/components/shared/InvoicePreviewModal.tsx
++++ b/src/components/shared/InvoicePreviewModal.tsx
+@@ -10,6 +10,7 @@ import { Modal } from '../ui/Modal';
+ import { CompanyInvoice } from './CompanyInvoice';
+ import { PaymentReminderModal } from './PaymentReminderModal';
+ import { getClientInfoByName } from '../../utils/clientHelper';
++import { useAllClients } from '../../features/clients/hooks/useClients';
+ import type { Invoice } from '../../types/invoice.types';
+ 
+ export interface InvoicePreviewModalProps {
+@@ -21,11 +22,12 @@ export interface InvoicePreviewModalProps {
+ 
+ export function InvoicePreviewModal({ open, onOpenChange, invoice, amountPaid }: InvoicePreviewModalProps) {
+   const [reminderOpen, setReminderOpen] = useState(false);
++  const { data: allClients = [] } = useAllClients();
+ 
+   if (!invoice) return null;
+ 
+-  // Resolve client details for invoice view
+-  const clientInfo = getClientInfoByName(invoice.clientName);
++  // Resolve client details for invoice view — always from the live Clients module data
++  const clientInfo = getClientInfoByName(allClients, invoice.clientName);
+   const clientDetails = {
+     companyName: invoice.clientName,
+     contactPerson: clientInfo.contactPerson,
+diff --git a/src/components/shared/PaymentReminderModal.tsx b/src/components/shared/PaymentReminderModal.tsx
+index 4f9dd68..a4e3f2b 100644
+--- a/src/components/shared/PaymentReminderModal.tsx
++++ b/src/components/shared/PaymentReminderModal.tsx
+@@ -20,6 +20,7 @@ import { formatCurrency } from '../../utils/formatCurrency';
+ import { formatDate } from '../../utils/formatDate';
+ import { getClientInfoByName } from '../../utils/clientHelper';
+ import { normalizePhoneNumber, isValidWhatsAppPhone, isValidEmail } from '../../utils/phoneUtils';
++import { useAllClients } from '../../features/clients/hooks/useClients';
+ import type { Invoice } from '../../types/invoice.types';
+ import type { Payment } from '../../types/payment.types';
+ 
+@@ -41,6 +42,10 @@ export function PaymentReminderModal({
+   const [activeTab, setActiveTab] = useState<'whatsapp' | 'email'>('whatsapp');
+   const [copied, setCopied] = useState(false);
+ 
++  // Live Clients module data — always current, so a client's phone/email edited (or a brand
++  // new client added) in the Clients module reflects here without any code change.
++  const { data: allClients = [] } = useAllClients();
++
+   // Dynamic fields
+   const invoiceNo = invoice?.invoiceNo || payment?.invoiceNo || 'INV-2025-001';
+   const clientName = invoice?.clientName || payment?.clientName || payment?.projectName?.split('—')[0]?.trim() || 'Valued Client';
+@@ -64,7 +69,7 @@ export function PaymentReminderModal({
+ 
+   // Resolve real client contact details dynamically
+   const projectName = payment?.projectName || invoice?.projectName;
+-  const clientInfo = getClientInfoByName(clientName, invoiceNo, projectName);
++  const clientInfo = getClientInfoByName(allClients, clientName, invoiceNo, projectName);
+   const displayClientName = clientInfo.companyName || clientName;
+   const defaultEmail = clientInfo.email || '';
+   const defaultPhone = clientInfo.phone || '';
+diff --git a/src/features/clients/hooks/useClients.ts b/src/features/clients/hooks/useClients.ts
+index 3355162..5e3387c 100644
+--- a/src/features/clients/hooks/useClients.ts
++++ b/src/features/clients/hooks/useClients.ts
+@@ -4,12 +4,13 @@
+  *                    states, cache invalidation on write) — this is the only thing ClientsListPage
+  *                    and its modals import from the data layer
+  * Dependencies: @tanstack/react-query, clientService, client.types
+- * Export: useClients, useClient, useCreateClient, useUpdateClient, useDeleteClient
++ * Export: useClients, useClient, useAllClients, useCreateClient, useUpdateClient, useDeleteClient
+  */
+ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+ import {
+   getClients,
+   getClientById,
++  getAllClients,
+   createClient,
+   updateClient,
+   deleteClient,
+@@ -26,6 +27,20 @@ export function useClients(params: ClientListParams) {
+   });
+ }
+ 
++/**
++ * Lightweight, unpaginated list of every client — the live source of truth for any feature
++ * that needs to resolve a client's phone/email/GST/address by name (e.g. Payment Reminder,
++ * Company Invoice preview). Always reflects clients added/edited in the Clients module,
++ * since it reads from the same clientService seed array as useClients/useClient.
++ */
++export function useAllClients() {
++  return useQuery({
++    queryKey: [CLIENTS_KEY, 'all'],
++    queryFn: () => getAllClients(),
++    staleTime: 30_000,
++  });
++}
++
+ export function useClient(id: string | undefined) {
+   return useQuery({
+     queryKey: [CLIENTS_KEY, 'detail', id],
+diff --git a/src/pages/billing/invoices/InvoicesListPage.tsx b/src/pages/billing/invoices/InvoicesListPage.tsx
+index e986084..9ff1a4f 100644
+--- a/src/pages/billing/invoices/InvoicesListPage.tsx
++++ b/src/pages/billing/invoices/InvoicesListPage.tsx
+@@ -34,6 +34,7 @@ import {
+ import { InvoiceFormModal } from '../../../features/invoices/components/InvoiceFormModal';
+ import { InvoicePreviewModal } from '../../../components/shared/InvoicePreviewModal';
+ import { PaymentReminderModal } from '../../../components/shared/PaymentReminderModal';
++import { useAllClients } from '../../../features/clients/hooks/useClients';
+ import type { Invoice, InvoiceFormValues } from '../../../types/invoice.types';
+ import type { InvoiceStatus } from '../../../types/common.types';
+ 
+@@ -64,6 +65,7 @@ export default function InvoicesListPage() {
+   const [selectedInvoiceForReminder, setSelectedInvoiceForReminder] = useState<Invoice | undefined>(undefined);
+ 
+   const projectOptionsQuery = useProjectOptions();
++  const { data: allClients = [] } = useAllClients();
+ 
+   const queryParams = useMemo(
+     () => ({
+@@ -218,7 +220,7 @@ export default function InvoicesListPage() {
+             label: 'Download PDF',
+             icon: <Receipt className="h-4 w-4" />,
+             onClick: () => {
+-              generateInvoicePDF(inv);
++              generateInvoicePDF(inv, allClients);
+               toast.success(`Downloading ${inv.invoiceNo}.pdf`);
+             },
+           },
+diff --git a/src/utils/clientHelper.ts b/src/utils/clientHelper.ts
+index 34aa587..4219e71 100644
+--- a/src/utils/clientHelper.ts
++++ b/src/utils/clientHelper.ts
+@@ -1,54 +1,27 @@
+ /**
+  * Purpose: Utility helper to resolve full Client details for Invoices and Payments Received
+- * Responsibilities: Map client company names, invoice numbers, or project names to phone, email, address, and GSTIN
+- * Rules: NO hardcoded dummy fallback phone numbers or fake fallback emails when client info is missing.
++ * Responsibilities: Map an invoice/payment's denormalized clientName (or invoiceNo/projectName)
++ *                    to the client's live phone, email, address, and GSTIN
++ * Rules: NO hardcoded dummy fallback phone numbers or fake fallback emails when client info is
++ *        missing. Source of truth is ALWAYS the live Clients module data (see useAllClients) —
++ *        never a static/duplicated copy, so edits made in the Clients module are reflected
++ *        immediately in Payment Reminder & Company Invoice preview.
+  */
+ import type { Client } from '../types/client.types';
+ 
+-export const CLIENT_DATABASE: Record<string, Partial<Client>> = {
+-  'Aravind Textiles Pvt Ltd': {
+-    companyName: 'Aravind Textiles Pvt Ltd',
+-    contactPerson: 'Aravind Kumar',
+-    phone: '+91 98765 43210',
+-    email: 'aravind@aravindtextiles.com',
+-    gstNumber: '33AAACA1234B1Z5',
+-    address: 'Plot 12, SIDCO Industrial Estate, Coimbatore, TN 641021',
+-  },
+-  'Nithya Health Solutions': {
+-    companyName: 'Nithya Health Solutions',
+-    contactPerson: 'Nithya Sri',
+-    phone: '+91 90000 11122',
+-    email: 'nithya@nithyahealth.in',
+-    gstNumber: '33AAACN5678C1Z2',
+-    address: '4th Floor, Anna Nagar, Chennai, TN 600040',
+-  },
+-  'Prime Logistics Corp': {
+-    companyName: 'Prime Logistics Corp',
+-    contactPerson: 'Suresh Babu',
+-    phone: '+91 87654 32109',
+-    email: 'suresh@primelogistics.com',
+-    gstNumber: '33AAACP9012D1Z8',
+-    address: 'No. 8, GST Road, Trichy, TN 620001',
+-  },
+-  'BlueWave Retail': {
+-    companyName: 'BlueWave Retail',
+-    contactPerson: 'Divya R',
+-    phone: '+91 91234 56789',
+-    email: 'divya@bluewaveretail.com',
+-    gstNumber: '33AAACB3456E1Z1',
+-    address: 'Tower B, Tidel Park, Chennai, TN 600113',
+-  },
+-  'Karthik Constructions': {
+-    companyName: 'Karthik Constructions',
+-    contactPerson: 'Karthik Raja',
+-    phone: '+91 99887 76655',
+-    email: 'karthik@karthikconstructions.com',
+-    gstNumber: '33AAACK7890F1Z4',
+-    address: 'Sathy Road, Erode, TN 638001',
+-  },
++// Legacy demo Invoice/Payment records (seeded in invoiceService/paymentService) reference
++// clients by invoice number or project name rather than the exact company name string.
++// These maps only resolve a NAME to look up in the live client list below — they never
++// hold contact details themselves.
++const INVOICE_TO_CLIENT_MAP: Record<string, string> = {
++  'INV-2025-001': 'Aravind Textiles Pvt Ltd',
++  'INV-2025-002': 'Aravind Textiles Pvt Ltd',
++  'INV-2025-003': 'Nithya Health Solutions',
++  'INV-2025-004': 'BlueWave Retail',
++  'INV-2025-005': 'Prime Logistics Corp',
++  'INV-2025-006': 'Karthik Constructions',
+ };
+ 
+-// Project & Invoice mappings to handle any indirect lookup
+ const PROJECT_TO_CLIENT_MAP: Record<string, string> = {
+   'ERP Revamp — Phase 1': 'Aravind Textiles Pvt Ltd',
+   'Patient Portal Redesign': 'Nithya Health Solutions',
+@@ -57,74 +30,50 @@ const PROJECT_TO_CLIENT_MAP: Record<string, string> = {
+   'Site Billing & Inventory Tool': 'Karthik Constructions',
+ };
+ 
+-const INVOICE_TO_CLIENT_MAP: Record<string, string> = {
+-  'INV-2025-001': 'Aravind Textiles Pvt Ltd',
+-  'INV-2025-002': 'Aravind Textiles Pvt Ltd',
+-  'INV-2025-003': 'Nithya Health Solutions',
+-  'INV-2025-004': 'BlueWave Retail',
+-  'INV-2025-005': 'Prime Logistics Corp',
+-  'INV-2025-006': 'Karthik Constructions',
+-};
+-
+-export function registerClientInfo(client: Partial<Client>) {
+-  if (client.companyName) {
+-    CLIENT_DATABASE[client.companyName] = {
+-      ...CLIENT_DATABASE[client.companyName],
+-      ...client,
+-    };
+-  }
++function findByCompanyName(clients: Client[], name?: string): Client | undefined {
++  if (!name) return undefined;
++  const query = name.toLowerCase().trim();
++  return clients.find((c) => c.companyName.toLowerCase().trim() === query);
+ }
+ 
++/**
++ * Resolves a client's live contact details.
++ * @param clients   The live client list (pass in data from useAllClients()) — this is the
++ *                   ONLY source of contact info; nothing is hardcoded here.
++ * @param clientNameOrQuery  The denormalized client name stored on the invoice/payment
++ * @param invoiceNo  Optional invoice number, used as a fallback name-resolution key for demo data
++ * @param projectName Optional project name, used as a fallback name-resolution key for demo data
++ */
+ export function getClientInfoByName(
++  clients: Client[],
+   clientNameOrQuery?: string,
+   invoiceNo?: string,
+   projectName?: string
+ ): Partial<Client> {
+-  // Direct match by client name
+-  if (clientNameOrQuery && CLIENT_DATABASE[clientNameOrQuery]) {
+-    return CLIENT_DATABASE[clientNameOrQuery];
+-  }
++  // 1. Direct / case-insensitive match against the live Clients module data
++  const direct = findByCompanyName(clients, clientNameOrQuery);
++  if (direct) return direct;
+ 
+-  // Case-insensitive match
+-  if (clientNameOrQuery) {
+-    const lowerQuery = clientNameOrQuery.toLowerCase().trim();
+-    const matchedKey = Object.keys(CLIENT_DATABASE).find(
+-      (key) => key.toLowerCase().trim() === lowerQuery
+-    );
+-    if (matchedKey) {
+-      return CLIENT_DATABASE[matchedKey];
+-    }
+-  }
+-
+-  // Match by invoice number if available
++  // 2. Resolve via invoice number -> company name -> live client list
+   if (invoiceNo && INVOICE_TO_CLIENT_MAP[invoiceNo]) {
+-    const matchedClient = INVOICE_TO_CLIENT_MAP[invoiceNo];
+-    if (CLIENT_DATABASE[matchedClient]) {
+-      return CLIENT_DATABASE[matchedClient];
+-    }
++    const viaInvoice = findByCompanyName(clients, INVOICE_TO_CLIENT_MAP[invoiceNo]);
++    if (viaInvoice) return viaInvoice;
+   }
+ 
+-  // Match by project name if available
++  // 3. Resolve via project name -> company name -> live client list
+   if (projectName && PROJECT_TO_CLIENT_MAP[projectName]) {
+-    const matchedClient = PROJECT_TO_CLIENT_MAP[projectName];
+-    if (CLIENT_DATABASE[matchedClient]) {
+-      return CLIENT_DATABASE[matchedClient];
+-    }
++    const viaProject = findByCompanyName(clients, PROJECT_TO_CLIENT_MAP[projectName]);
++    if (viaProject) return viaProject;
+   }
+ 
+-  // Check if clientNameOrQuery itself matches a project name or invoice number
++  // 4. clientNameOrQuery itself might actually be a project name or invoice number
+   if (clientNameOrQuery && PROJECT_TO_CLIENT_MAP[clientNameOrQuery]) {
+-    const matchedClient = PROJECT_TO_CLIENT_MAP[clientNameOrQuery];
+-    if (CLIENT_DATABASE[matchedClient]) {
+-      return CLIENT_DATABASE[matchedClient];
+-    }
++    const viaProject = findByCompanyName(clients, PROJECT_TO_CLIENT_MAP[clientNameOrQuery]);
++    if (viaProject) return viaProject;
+   }
+-
+   if (clientNameOrQuery && INVOICE_TO_CLIENT_MAP[clientNameOrQuery]) {
+-    const matchedClient = INVOICE_TO_CLIENT_MAP[clientNameOrQuery];
+-    if (CLIENT_DATABASE[matchedClient]) {
+-      return CLIENT_DATABASE[matchedClient];
+-    }
++    const viaInvoice = findByCompanyName(clients, INVOICE_TO_CLIENT_MAP[clientNameOrQuery]);
++    if (viaInvoice) return viaInvoice;
+   }
+ 
+   // Do NOT hardcode dummy phone numbers or fake emails!
+@@ -134,5 +83,6 @@ export function getClientInfoByName(
+     phone: undefined,
+     email: undefined,
+     address: undefined,
++    gstNumber: undefined,
+   };
+ }
+diff --git a/src/utils/generateInvoicePdf.ts b/src/utils/generateInvoicePdf.ts
+index 441e78c..1faeccc 100644
+--- a/src/utils/generateInvoicePdf.ts
++++ b/src/utils/generateInvoicePdf.ts
+@@ -10,6 +10,7 @@
+ import jsPDF from 'jspdf';
+ import autoTable from 'jspdf-autotable';
+ import type { Invoice } from '../types/invoice.types';
++import type { Client } from '../types/client.types';
+ import { formatDate } from './formatDate';
+ import { amountInWordsINR } from './numberToWords';
+ import { getClientInfoByName } from './clientHelper';
+@@ -31,12 +32,17 @@ const BANK_DETAILS = {
+   branch: 'Main Branch, Puducherry',
+ };
+ 
+-export function generateInvoicePDF(invoice: Invoice, amountPaid?: number): void {
++/**
++ * @param clients Live Clients module data (pass `data` from useAllClients()) — used to resolve
++ *                the client's Attn/Address/Phone/Email/GSTIN block on the PDF. Always reflects
++ *                clients added/edited in the Clients module.
++ */
++export function generateInvoicePDF(invoice: Invoice, clients: Client[], amountPaid?: number): void {
+   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+   const pageWidth = doc.internal.pageSize.width;
+   const margin = 14;
+ 
+-  const clientInfo = getClientInfoByName(invoice.clientName);
++  const clientInfo = getClientInfoByName(clients, invoice.clientName);
+ 
+   // Financial calculations
+   const subTotal = invoice.amount;
+-- 
+2.43.0
+

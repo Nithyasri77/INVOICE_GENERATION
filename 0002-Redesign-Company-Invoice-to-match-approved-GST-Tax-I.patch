@@ -1,0 +1,964 @@
+From 5bd5de4de1bb6b70f846e67b937a3ad5a7e8f0e5 Mon Sep 17 00:00:00 2001
+From: Adhi <adhi@shinecraft.dev>
+Date: Mon, 17 Aug 2026 08:50:00 +0000
+Subject: [PATCH 2/2] Redesign Company Invoice to match approved GST Tax
+ Invoice reference layout
+
+- Added Service Type, Billing Period (From/To), and Place of Supply fields to the Invoice
+  entity, InvoiceFormValues, mock seed data, and the Create/Edit Invoice form so these can
+  be captured per invoice.
+- Rebuilt CompanyInvoice.tsx to match the approved reference: logo + Invoice No/Date/Due
+  Date/Place of Supply meta box header, centered TAX INVOICE title, dark-header BILL TO box,
+  a 3-column Project Details / Billing Information / Service Details strip, SI No/Service
+  Description/SAC-HSN/Qty/Rate/Amount items table, a dark-header Service Payment Summary box
+  (Service Value, Amount Received Till Date, Current Invoice Amount, Total After This
+  Payment, Outstanding Balance) alongside a Taxable Amount/CGST/SGST/Invoice Total box +
+  Amount in Words, Bank Details + bulleted Notes, a separate Terms & Conditions section, and
+  a stamp + 'For Shine Craft Technologies' authorised-signatory block.
+- Wired the fallback synthetic invoice built in PaymentsReceivedListPage with the new
+  required fields so the Payments \u2192 View Invoice preview still type-checks and renders.
+---
+ src/components/shared/CompanyInvoice.tsx      | 549 ++++++++----------
+ .../invoices/components/InvoiceFormModal.tsx  |  62 +-
+ .../PaymentsReceivedListPage.tsx              |   4 +
+ src/services/invoiceService.ts                |  24 +
+ src/types/invoice.types.ts                    |   8 +
+ 5 files changed, 336 insertions(+), 311 deletions(-)
+
+diff --git a/src/components/shared/CompanyInvoice.tsx b/src/components/shared/CompanyInvoice.tsx
+index 95b56f3..1b714a5 100644
+--- a/src/components/shared/CompanyInvoice.tsx
++++ b/src/components/shared/CompanyInvoice.tsx
+@@ -1,25 +1,26 @@
+ /**
+- * Purpose: Enterprise Company Invoice Template Component
+- * Design & Capabilities:
+- * - Modern business aesthetic with white card, 12px rounded corners, subtle shadow, light border
+- * - Displays Company Logo, Name, Tagline, Address, GSTIN, State Code, Contact Details
+- * - Displays Client details (Company Name, Contact Person, Address, Phone, Email, GSTIN)
+- * - Displays Invoice metadata (Invoice No, Dates, Project, Service Category, Billing Type, Stage, Quotation No)
+- * - Line Items table (HSN/SAC, Qty, Rate, Amount)
+- * - Financial breakdown (Sub Total, CGST 9%, SGST 9%, Total Amount, Amount Paid, Pending Amount)
+- * - Amount in Words (INR)
+- * - Bank Details block (Bank Name, Account Holder, Account Number, IFSC Code, Branch)
+- * - Notes & Terms & Conditions
+- * - Official circular company stamp & Authorised Signatory block
+- * - A4 Print & PDF download optimized
++ * Purpose: Official GST Tax Invoice template component (matches Shine Craft Technologies'
++ *          approved letterhead design — reference: Tax Invoice sample, Aug 2026)
++ * Design & Layout (top to bottom, matches the approved reference):
++ * - Header: Company letterhead (logo, name, address, GSTIN) on the left; Invoice No / Date /
++ *   Due Date / Place of Supply meta box on the right
++ * - Centered "TAX INVOICE" title
++ * - "BILL TO" dark header box with client's company/contact/GSTIN
++ * - Three-column strip: Project Details | Billing Information | Service Details
++ * - Line items table: SI No, Service Description, SAC/HSN, Qty, Rate, Amount
++ * - "SERVICE PAYMENT SUMMARY" dark header box + tax breakdown box side by side, Amount in Words
++ * - Bank Details + Notes side by side
++ * - Terms & Conditions
++ * - Company stamp + "For Shine Craft Technologies" authorised signatory block
++ * - Footer thank-you line
++ * - A4 Print & PDF download optimized (html2canvas + jsPDF, same as before)
+  */
+ import { useRef, useState } from 'react';
+-import { Printer, Download, ArrowLeft, Send, CheckCircle2, AlertTriangle, Clock, Mail, Phone, Building2 } from 'lucide-react';
++import { Printer, Download, ArrowLeft, Send, CheckCircle2, AlertTriangle, Clock } from 'lucide-react';
+ import html2canvas from 'html2canvas';
+ import { jsPDF } from 'jspdf';
+ import { Button } from '../ui/Button';
+ import { toast } from '../ui/Toast';
+-import { formatCurrency } from '../../utils/formatCurrency';
+ import { formatDate } from '../../utils/formatDate';
+ import { amountInWordsINR } from '../../utils/numberToWords';
+ import type { Invoice } from '../../types/invoice.types';
+@@ -29,7 +30,6 @@ export interface CompanyInvoiceProps {
+   invoice: Invoice;
+   companyInfo?: {
+     companyName: string;
+-    tagline: string;
+     address: string;
+     gstin: string;
+     stateCode: string;
+@@ -51,6 +51,7 @@ export interface CompanyInvoiceProps {
+     gstNumber?: string;
+     address?: string;
+   };
++  /** Amount already received against this invoice (from Payments) */
+   amountPaid?: number;
+   onBack?: () => void;
+   showBackButton?: boolean;
+@@ -59,22 +60,32 @@ export interface CompanyInvoiceProps {
+ 
+ const DEFAULT_COMPANY_INFO = {
+   companyName: 'Shine Craft Technologies',
+-  tagline: 'Craft | Code | Connect',
+-  address: 'No. 21, Francis Assisi Street, Kuruvikuppam, Puducherry - 605001',
+-  gstin: '34BJPPM7060H1ZM',
+-  stateCode: '34 — Puducherry',
+-  contactPhone: '+91 73000353789',
+-  contactEmail: 'solutions@shinecrafttech.com',
++  address: 'No. 21, Francis Assisi Street, Kurusukuppam, Puducherry - 605001',
++  gstin: '34BJPVP4662E1ZM',
++  stateCode: '34',
++  contactPhone: '+91 7200353789',
++  contactEmail: 'Solutions@shinecrafttechnologies.com',
+ };
+ 
+ const DEFAULT_BANK_DETAILS = {
+-  bankName: 'HDFC Bank',
++  bankName: 'Indian Overseas Bank',
+   accountHolderName: 'Shine Craft Technologies',
+-  accountNumber: '50100123456789',
+-  ifscCode: 'HDFC0001234',
+-  branch: 'Main Branch, Puducherry',
++  accountNumber: '197602000000922',
++  ifscCode: 'IOBA0001976',
++  branch: '100 Feet Road',
+ };
+ 
++const NOTES_LIST = [
++  'Please make payment within the due date.',
++  'Kindly mention the invoice number while making the payment.',
++  'Payment once made will be considered as accepted towards the service mentioned in this invoice.',
++];
++
++const TERMS_LIST = [
++  'Interest @18% p.a. will be charged on overdue invoices.',
++  'All disputes are subject to Puducherry jurisdiction only.',
++];
++
+ export function CompanyInvoice({
+   invoice,
+   companyInfo = DEFAULT_COMPANY_INFO,
+@@ -88,34 +99,32 @@ export function CompanyInvoice({
+   const invoiceRef = useRef<HTMLDivElement>(null);
+   const [isDownloading, setIsDownloading] = useState(false);
+ 
+-  // Financial calculations
+-  const subTotal = invoice.amount;
++  // ================= FINANCIAL CALCULATIONS =================
++  const taxableAmount = invoice.amount; // Sub Total / Service Value — pre-GST
+   const cgst = invoice.cgst;
+   const sgst = invoice.sgst;
+-  const totalAmount = subTotal + cgst + sgst;
++  const invoiceTotal = taxableAmount + cgst + sgst; // GST-inclusive total due on THIS invoice
+ 
+-  // Determine paid and pending amounts based on status and payments
+-  let calculatedPaid = 0;
++  // Amount already received against this invoice (from Payments module)
++  let receivedTillDate = 0;
+   if (invoice.status === 'Paid') {
+-    calculatedPaid = totalAmount;
++    receivedTillDate = invoiceTotal;
+   } else if (amountPaid !== undefined) {
+-    calculatedPaid = amountPaid;
++    receivedTillDate = amountPaid;
+   } else if (invoice.status === 'Part Paid') {
+-    // Default estimated paid for demo part-paid status if not passed explicitly
+-    calculatedPaid = Math.round(totalAmount * 0.5);
++    receivedTillDate = Math.round(invoiceTotal * 0.5);
+   }
+ 
+-  const pendingAmount = Math.max(0, totalAmount - calculatedPaid);
+-  const isPendingPayment = invoice.status !== 'Paid' && pendingAmount > 0;
++  const totalAfterThisPayment = receivedTillDate + invoiceTotal;
++  const outstandingBalance = Math.max(0, invoiceTotal - receivedTillDate);
++  const isPendingPayment = invoice.status !== 'Paid' && outstandingBalance > 0;
++
++  const wordsTotal = amountInWordsINR(invoiceTotal);
+ 
+-  // Formatting values
+-  const formattedSubTotal = formatCurrency(subTotal);
+-  const formattedCgst = formatCurrency(cgst);
+-  const formattedSgst = formatCurrency(sgst);
+-  const formattedTotal = formatCurrency(totalAmount);
+-  const formattedPaid = formatCurrency(calculatedPaid);
+-  const formattedPending = formatCurrency(pendingAmount);
+-  const wordsTotal = amountInWordsINR(totalAmount);
++  const billingPeriodLabel =
++    invoice.billingPeriodStart && invoice.billingPeriodEnd
++      ? `${formatDate(invoice.billingPeriodStart)} - ${formatDate(invoice.billingPeriodEnd)}`
++      : '—';
+ 
+   const handlePrint = () => {
+     window.print();
+@@ -150,36 +159,35 @@ export function CompanyInvoice({
+     }
+   };
+ 
+-  // Status Badge Config
+   const getStatusBadge = () => {
+     switch (invoice.status) {
+       case 'Paid':
+         return (
+-          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800">
++          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-[11px] font-bold text-emerald-800">
+             <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> PAID IN FULL
+           </span>
+         );
+       case 'Part Paid':
+         return (
+-          <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-800">
++          <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-[11px] font-bold text-amber-800">
+             <Clock className="h-3.5 w-3.5 text-amber-600" /> PARTIALLY PAID
+           </span>
+         );
+       case 'Overdue':
+         return (
+-          <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-rose-50 px-3 py-1 text-xs font-bold text-rose-800">
++          <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-rose-50 px-3 py-1 text-[11px] font-bold text-rose-800">
+             <AlertTriangle className="h-3.5 w-3.5 text-rose-600" /> OVERDUE
+           </span>
+         );
+       case 'Sent':
+         return (
+-          <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-300 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-800">
++          <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-300 bg-blue-50 px-3 py-1 text-[11px] font-bold text-blue-800">
+             <Send className="h-3.5 w-3.5 text-blue-600" /> PAYMENT PENDING
+           </span>
+         );
+       default:
+         return (
+-          <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
++          <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-slate-100 px-3 py-1 text-[11px] font-bold text-slate-700">
+             DRAFT
+           </span>
+         );
+@@ -192,12 +200,7 @@ export function CompanyInvoice({
+       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm print:hidden">
+         <div className="flex items-center gap-3">
+           {showBackButton && (
+-            <Button
+-              variant="secondary"
+-              size="sm"
+-              leftIcon={<ArrowLeft className="h-4 w-4" />}
+-              onClick={onBack}
+-            >
++            <Button variant="secondary" size="sm" leftIcon={<ArrowLeft className="h-4 w-4" />} onClick={onBack}>
+               Back
+             </Button>
+           )}
+@@ -219,179 +222,113 @@ export function CompanyInvoice({
+               Payment Pending Reminder
+             </Button>
+           )}
+-          <Button
+-            variant="secondary"
+-            size="sm"
+-            leftIcon={<Printer className="h-4 w-4" />}
+-            onClick={handlePrint}
+-          >
++          <Button variant="secondary" size="sm" leftIcon={<Printer className="h-4 w-4" />} onClick={handlePrint}>
+             Print
+           </Button>
+-          <Button
+-            size="sm"
+-            isLoading={isDownloading}
+-            leftIcon={<Download className="h-4 w-4" />}
+-            onClick={handleDownloadPDF}
+-          >
++          <Button size="sm" isLoading={isDownloading} leftIcon={<Download className="h-4 w-4" />} onClick={handleDownloadPDF}>
+             Download PDF
+           </Button>
+         </div>
+       </div>
+ 
+-      {/* Main Printable Company Invoice Card */}
++      {/* Main Printable Tax Invoice Card */}
+       <div className="flex justify-center">
+         <div
+           ref={invoiceRef}
+-          className="company-invoice-container w-full max-w-[850px] rounded-[12px] border border-[#E5E7EB] bg-white p-6 sm:p-10 shadow-lg print:max-w-none print:shadow-none print:border-slate-300 print:rounded-none print:p-6"
++          className="company-invoice-container w-full max-w-[850px] rounded-[12px] border border-[#E5E7EB] bg-white p-6 sm:p-10 shadow-lg print:max-w-none print:shadow-none print:border-slate-300 print:rounded-none print:p-6 text-slate-800"
+         >
+-          {/* ================= HEADER SECTION ================= */}
+-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-12 sm:items-start border-b border-slate-200 pb-6">
+-            {/* LEFT (Cols 1-7): Company Logo & Profile */}
+-            <div className="sm:col-span-7 space-y-2">
+-              <div className="flex items-center gap-3">
+-                <img
+-                  src={logo}
+-                  alt={companyInfo.companyName}
+-                  className="h-12 w-auto max-w-[180px] object-contain"
+-                />
+-              </div>
+-              <div className="space-y-0.5 pt-1">
+-                <h1 className="text-xl font-extrabold tracking-tight text-slate-900">
+-                  {companyInfo.companyName}
+-                </h1>
+-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+-                  {companyInfo.tagline}
+-                </p>
+-                <p className="text-xs text-slate-600 max-w-md leading-relaxed pt-1">
+-                  {companyInfo.address}
+-                </p>
+-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600 pt-1 font-medium">
+-                  <span>
+-                    <strong className="text-slate-700">GSTIN:</strong> {companyInfo.gstin}
+-                  </span>
+-                  <span>
+-                    <strong className="text-slate-700">State Code:</strong> {companyInfo.stateCode}
+-                  </span>
+-                </div>
+-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600 font-medium">
+-                  <span className="inline-flex items-center gap-1">
+-                    <Phone className="h-3 w-3 text-slate-400" /> {companyInfo.contactPhone}
+-                  </span>
+-                  <span className="inline-flex items-center gap-1">
+-                    <Mail className="h-3 w-3 text-slate-400" /> {companyInfo.contactEmail}
+-                  </span>
+-                </div>
+-              </div>
++          {/* ================= HEADER: LOGO + INVOICE META BOX ================= */}
++          <div className="grid grid-cols-1 gap-6 sm:grid-cols-12 sm:items-start">
++            <div className="sm:col-span-7">
++              <img src={logo} alt={companyInfo.companyName} className="h-14 w-auto max-w-[220px] object-contain" />
+             </div>
++            <div className="sm:col-span-5">
++              <table className="w-full overflow-hidden rounded-md border border-slate-300 text-xs">
++                <tbody>
++                  <tr className="border-b border-slate-300">
++                    <td className="px-3 py-1.5 font-semibold text-slate-600 whitespace-nowrap">Invoice No.</td>
++                    <td className="px-3 py-1.5 font-bold text-slate-900">: {invoice.invoiceNo}</td>
++                  </tr>
++                  <tr className="border-b border-slate-300">
++                    <td className="px-3 py-1.5 font-semibold text-slate-600 whitespace-nowrap">Invoice Date</td>
++                    <td className="px-3 py-1.5 text-slate-800">: {formatDate(invoice.invoiceDate)}</td>
++                  </tr>
++                  <tr className="border-b border-slate-300">
++                    <td className="px-3 py-1.5 font-semibold text-slate-600 whitespace-nowrap">Due Date</td>
++                    <td className={`px-3 py-1.5 ${invoice.status === 'Overdue' ? 'font-bold text-rose-600' : 'text-slate-800'}`}>
++                      : {formatDate(invoice.dueDate)}
++                    </td>
++                  </tr>
++                  <tr>
++                    <td className="px-3 py-1.5 font-semibold text-slate-600 whitespace-nowrap">Place of Supply</td>
++                    <td className="px-3 py-1.5 text-slate-800">: {invoice.placeOfSupply || '—'}</td>
++                  </tr>
++                </tbody>
++              </table>
++            </div>
++          </div>
+ 
+-            {/* RIGHT (Cols 8-12): TAX INVOICE Header & Metadata */}
+-            <div className="sm:col-span-5 flex flex-col items-start sm:items-end justify-between space-y-3">
+-              <div className="text-left sm:text-right space-y-1">
+-                <h2 className="text-2xl sm:text-3xl font-black uppercase tracking-wider text-blue-700">
+-                  TAX INVOICE
+-                </h2>
+-                <div className="pt-1">{getStatusBadge()}</div>
+-              </div>
++          {/* ================= TITLE ================= */}
++          <div className="my-5 flex flex-col items-center gap-1.5">
++            <h2 className="text-2xl sm:text-3xl font-black uppercase tracking-[0.2em] text-slate-800">TAX INVOICE</h2>
++            {getStatusBadge()}
++          </div>
+ 
+-              {/* Invoice Meta Box */}
+-              <div className="w-full rounded-lg border border-slate-200 bg-slate-50/80 p-3.5 space-y-2 text-xs shadow-2xs">
+-                <div className="flex justify-between items-center border-b border-slate-200 pb-1.5">
+-                  <span className="font-semibold text-slate-500">Invoice No:</span>
+-                  <span className="font-mono font-bold text-slate-900 text-sm">{invoice.invoiceNo}</span>
+-                </div>
+-                <div className="flex justify-between items-center">
+-                  <span className="font-medium text-slate-500">Invoice Date:</span>
+-                  <span className="font-semibold text-slate-800">{formatDate(invoice.invoiceDate)}</span>
+-                </div>
+-                <div className="flex justify-between items-center">
+-                  <span className="font-medium text-slate-500">Due Date:</span>
+-                  <span className={`font-semibold ${invoice.status === 'Overdue' ? 'text-rose-600 font-bold' : 'text-slate-800'}`}>
+-                    {formatDate(invoice.dueDate)}
+-                  </span>
+-                </div>
+-              </div>
++          {/* ================= COMPANY (FROM) & BILL TO ================= */}
++          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
++            <div className="space-y-1 text-xs leading-relaxed">
++              <h3 className="text-sm font-bold text-slate-900">{companyInfo.companyName}</h3>
++              <p className="text-slate-600 max-w-xs">{companyInfo.address}</p>
++              <p className="text-slate-600">Contact: {companyInfo.contactPhone}</p>
++              <p className="text-slate-600">Email: {companyInfo.contactEmail}</p>
++              <p className="text-slate-600">GSTIN: {companyInfo.gstin}</p>
++              <p className="text-slate-600">State Code: {companyInfo.stateCode}</p>
+             </div>
+-          </div>
+ 
+-          {/* ================= BILLED TO & PROJECT DETAILS ================= */}
+-          <div className="my-6 grid grid-cols-1 gap-6 md:grid-cols-2">
+-            {/* CLIENT / CUSTOMER DETAILS */}
+-            <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-4 space-y-2.5">
+-              <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+-                <Building2 className="h-4 w-4 text-blue-600" />
+-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+-                  Billed To (Client / Customer)
+-                </h3>
+-              </div>
+-              <div className="space-y-1">
+-                <p className="text-base font-extrabold text-slate-900">
+-                  {clientDetails?.companyName || invoice.clientName}
+-                </p>
+-                {clientDetails?.contactPerson && (
+-                  <p className="text-xs font-medium text-slate-700">
+-                    Attn: {clientDetails.contactPerson}
+-                  </p>
+-                )}
+-                {clientDetails?.address && (
+-                  <p className="text-xs text-slate-600 whitespace-pre-line leading-relaxed">
+-                    {clientDetails.address}
+-                  </p>
++            <div className="overflow-hidden rounded-md border border-slate-300">
++              <div className="bg-slate-800 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-white">Bill To</div>
++              <div className="space-y-1 p-3 text-xs leading-relaxed">
++                <p className="text-sm font-extrabold text-slate-900">{clientDetails?.companyName || invoice.clientName}</p>
++                {clientDetails?.address && <p className="text-slate-600 whitespace-pre-line">{clientDetails.address}</p>}
++                {clientDetails?.gstNumber && <p className="text-slate-600">GSTIN: {clientDetails.gstNumber}</p>}
++                {clientDetails?.contactPerson && <p className="text-slate-600">Contact Person: {clientDetails.contactPerson}</p>}
++                {clientDetails?.phone && <p className="text-slate-600">Contact No: {clientDetails.phone}</p>}
++                {!clientDetails?.phone && !clientDetails?.email && (
++                  <p className="text-amber-700 italic">No contact details on file — add this client's phone/email in the Clients module.</p>
+                 )}
+-                <div className="pt-1.5 space-y-1 text-xs text-slate-600">
+-                  {clientDetails?.phone && (
+-                    <p><span className="font-medium text-slate-500">Phone:</span> {clientDetails.phone}</p>
+-                  )}
+-                  {clientDetails?.email && (
+-                    <p><span className="font-medium text-slate-500">Email:</span> {clientDetails.email}</p>
+-                  )}
+-                  {clientDetails?.gstNumber && (
+-                    <p><span className="font-medium text-slate-500">GSTIN:</span> {clientDetails.gstNumber}</p>
+-                  )}
+-                </div>
+               </div>
+             </div>
++          </div>
+ 
+-            {/* PROJECT & BILLING DETAILS */}
+-            <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-4 space-y-2.5">
+-              <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+-                <Clock className="h-4 w-4 text-blue-600" />
+-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+-                  Invoice & Billing Metadata
+-                </h3>
+-              </div>
+-              <div className="grid grid-cols-2 gap-2 text-xs">
+-                <div>
+-                  <span className="block font-medium text-slate-500">Project:</span>
+-                  <span className="font-semibold text-slate-900">{invoice.projectName}</span>
+-                </div>
+-                <div>
+-                  <span className="block font-medium text-slate-500">Service Category:</span>
+-                  <span className="font-semibold text-slate-800">{invoice.serviceCategory}</span>
+-                </div>
+-                <div>
+-                  <span className="block font-medium text-slate-500">Billing Type:</span>
+-                  <span className="font-medium text-slate-800">{invoice.billingType}</span>
+-                </div>
+-                <div>
+-                  <span className="block font-medium text-slate-500">Stage / Milestone:</span>
+-                  <span className="font-medium text-slate-800">{invoice.billingStage}</span>
+-                </div>
+-                <div className="col-span-2 pt-1 border-t border-slate-200/80">
+-                  <span className="font-medium text-slate-500">Quotation Reference:</span>{' '}
+-                  <span className="font-mono font-semibold text-blue-700">{invoice.quotationNo}</span>
+-                </div>
+-              </div>
++          {/* ================= PROJECT / BILLING / SERVICE DETAILS ================= */}
++          <div className="my-5 grid grid-cols-1 gap-3 rounded-md border border-slate-300 p-4 text-xs sm:grid-cols-3 sm:gap-4 sm:divide-x sm:divide-slate-200">
++            <div className="space-y-1.5 sm:pr-4">
++              <h4 className="font-bold text-slate-700">Project Details</h4>
++              <p><span className="font-semibold text-slate-600">Project ID</span> : {invoice.projectId}</p>
++              <p><span className="font-semibold text-slate-600">Project Name</span> : {invoice.projectName}</p>
++              <p><span className="font-semibold text-slate-600">Quotation No</span> : {invoice.quotationNo}</p>
++            </div>
++            <div className="space-y-1.5 sm:px-4">
++              <h4 className="font-bold text-slate-700">Billing Information</h4>
++              <p><span className="font-semibold text-slate-600">Billing Stage</span> : {invoice.billingStage}</p>
++              <p><span className="font-semibold text-slate-600">Billing Type</span> : {invoice.billingType}</p>
++              <p><span className="font-semibold text-slate-600">Billing Period</span> : {billingPeriodLabel}</p>
++            </div>
++            <div className="space-y-1.5 sm:pl-4">
++              <h4 className="font-bold text-slate-700">Service Details</h4>
++              <p><span className="font-semibold text-slate-600">Service Type</span> : {invoice.serviceType}</p>
++              <p><span className="font-semibold text-slate-600">Category</span> : {invoice.serviceCategory}</p>
+             </div>
+           </div>
+ 
+           {/* ================= INVOICE ITEMS TABLE ================= */}
+-          <div className="my-6 overflow-hidden rounded-lg border border-slate-200">
++          <div className="my-5 overflow-hidden rounded-lg border border-slate-200">
+             <table className="w-full text-left text-xs">
+-              <thead className="bg-slate-900 text-white font-semibold uppercase tracking-wider">
++              <thead className="bg-slate-800 text-white font-semibold uppercase tracking-wider">
+                 <tr>
+-                  <th className="px-3 py-3 w-10 text-center">#</th>
+-                  <th className="px-4 py-3">Item Description</th>
+-                  <th className="px-3 py-3 w-24">HSN / SAC</th>
++                  <th className="px-3 py-3 w-12 text-center">SI. No.</th>
++                  <th className="px-4 py-3">Service Description</th>
++                  <th className="px-3 py-3 w-24">SAC/HSN</th>
+                   <th className="px-3 py-3 w-16 text-right">Qty</th>
+                   <th className="px-4 py-3 w-28 text-right">Rate (₹)</th>
+                   <th className="px-4 py-3 w-32 text-right">Amount (₹)</th>
+@@ -422,125 +359,129 @@ export function CompanyInvoice({
+             </table>
+           </div>
+ 
+-          {/* ================= SUMMARY & PAYMENT DETAILS ================= */}
+-          <div className="my-6 grid grid-cols-1 gap-6 md:grid-cols-12 items-start">
+-            {/* LEFT (Cols 1-7): Bank Details & Amount in Words */}
+-            <div className="md:col-span-7 space-y-4">
+-              {/* Amount in Words */}
+-              <div className="rounded-lg bg-blue-50/50 border border-blue-100 p-3 text-xs">
+-                <span className="font-bold text-slate-600 block mb-0.5">Amount in Words:</span>
+-                <span className="font-medium italic text-blue-900">{wordsTotal}</span>
++          {/* ================= SERVICE PAYMENT SUMMARY & TAX SUMMARY ================= */}
++          <div className="my-5 grid grid-cols-1 gap-4 sm:grid-cols-2 items-start">
++            {/* LEFT: Service Payment Summary */}
++            <div className="overflow-hidden rounded-md border border-slate-300">
++              <div className="bg-slate-800 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-white">
++                Service Payment Summary
+               </div>
++              <div className="divide-y divide-slate-200 text-xs">
++                <div className="flex justify-between px-3 py-1.5">
++                  <span className="text-slate-600">Service Value</span>
++                  <span className="font-semibold text-slate-900">₹ {taxableAmount.toLocaleString('en-IN')}</span>
++                </div>
++                <div className="flex justify-between px-3 py-1.5">
++                  <span className="text-slate-600">Amount Received Till Date</span>
++                  <span className="font-semibold text-slate-900">₹ {receivedTillDate.toLocaleString('en-IN')}</span>
++                </div>
++                <div className="flex justify-between px-3 py-1.5 bg-blue-50/60">
++                  <span className="font-semibold text-blue-800">Current Invoice Amount</span>
++                  <span className="font-bold text-blue-800">₹ {invoiceTotal.toLocaleString('en-IN')}</span>
++                </div>
++                <div className="flex justify-between px-3 py-1.5">
++                  <span className="text-slate-600">Total After This Payment</span>
++                  <span className="font-semibold text-slate-900">₹ {totalAfterThisPayment.toLocaleString('en-IN')}</span>
++                </div>
++                <div className="flex justify-between px-3 py-1.5">
++                  <span className={`font-semibold ${outstandingBalance > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
++                    Outstanding Balance
++                  </span>
++                  <span className={`font-bold ${outstandingBalance > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
++                    ₹ {outstandingBalance.toLocaleString('en-IN')}
++                  </span>
++                </div>
++              </div>
++            </div>
+ 
+-              {/* Bank Payment Details */}
+-              <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 space-y-2 text-xs">
+-                <h4 className="font-bold uppercase tracking-wider text-slate-700 border-b border-slate-200 pb-1.5">
+-                  Bank & Payment Details
+-                </h4>
+-                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-slate-700 pt-1">
+-                  <div>
+-                    <span className="font-semibold text-slate-500 block">Bank Name:</span>
+-                    <span className="font-bold text-slate-900">{bankDetails.bankName}</span>
+-                  </div>
+-                  <div>
+-                    <span className="font-semibold text-slate-500 block">Account Name:</span>
+-                    <span className="font-semibold text-slate-900">{bankDetails.accountHolderName}</span>
++            {/* RIGHT: Tax breakdown + Amount in Words */}
++            <div className="space-y-3">
++              <div className="overflow-hidden rounded-md border border-slate-300 text-xs">
++                <div className="divide-y divide-slate-200">
++                  <div className="flex justify-between px-3 py-1.5">
++                    <span className="text-slate-600">Taxable Amount</span>
++                    <span className="font-semibold text-slate-900">{taxableAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                   </div>
+-                  <div>
+-                    <span className="font-semibold text-slate-500 block">Account Number:</span>
+-                    <span className="font-mono font-bold text-slate-900">{bankDetails.accountNumber}</span>
++                  <div className="flex justify-between px-3 py-1.5">
++                    <span className="text-slate-600">CGST @9%</span>
++                    <span className="font-semibold text-slate-900">{cgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                   </div>
+-                  <div>
+-                    <span className="font-semibold text-slate-500 block">IFSC Code:</span>
+-                    <span className="font-mono font-bold text-slate-900">{bankDetails.ifscCode}</span>
++                  <div className="flex justify-between px-3 py-1.5">
++                    <span className="text-slate-600">SGST @9%</span>
++                    <span className="font-semibold text-slate-900">{sgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                   </div>
+-                  <div className="col-span-2">
+-                    <span className="font-semibold text-slate-500 block">Branch:</span>
+-                    <span>{bankDetails.branch}</span>
++                  <div className="flex justify-between bg-slate-800 px-3 py-2 text-white">
++                    <span className="font-bold">Invoice Total (₹)</span>
++                    <span className="font-bold">{invoiceTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                   </div>
+                 </div>
+               </div>
+-
+-              {/* Notes */}
+-              {invoice.notes && (
+-                <div className="text-xs text-slate-600 space-y-1">
+-                  <span className="font-semibold text-slate-700">Terms & Notes:</span>
+-                  <p className="italic text-slate-500 bg-slate-50 p-2.5 rounded border border-slate-100">
+-                    {invoice.notes}
+-                  </p>
+-                </div>
+-              )}
+-            </div>
+-
+-            {/* RIGHT (Cols 8-12): Totals Box */}
+-            <div className="md:col-span-5 rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-2.5 text-xs shadow-2xs">
+-              <div className="flex justify-between items-center text-slate-600">
+-                <span>Sub Total:</span>
+-                <span className="font-mono font-medium text-slate-900">{formattedSubTotal}</span>
+-              </div>
+-              <div className="flex justify-between items-center text-slate-600">
+-                <span>CGST (9%):</span>
+-                <span className="font-mono font-medium text-slate-900">{formattedCgst}</span>
+-              </div>
+-              <div className="flex justify-between items-center text-slate-600">
+-                <span>SGST (9%):</span>
+-                <span className="font-mono font-medium text-slate-900">{formattedSgst}</span>
+-              </div>
+-              <div className="flex justify-between items-center text-slate-600 font-medium border-t border-slate-200 pt-2">
+-                <span>Total GST (18%):</span>
+-                <span className="font-mono text-slate-900">{formatCurrency(cgst + sgst)}</span>
++              <div className="text-xs">
++                <span className="font-semibold text-slate-700">Amount in Words:</span>
++                <p className="italic text-slate-600">{wordsTotal}</p>
+               </div>
++            </div>
++          </div>
+ 
+-              <div className="flex justify-between items-center border-t-2 border-slate-900 pt-2.5 text-sm font-extrabold text-slate-900">
+-                <span>Total Invoice Amount:</span>
+-                <span className="font-mono text-blue-700 text-base">{formattedTotal}</span>
+-              </div>
++          {/* ================= BANK DETAILS & NOTES ================= */}
++          <div className="my-5 grid grid-cols-1 gap-4 sm:grid-cols-2 items-start">
++            <div className="rounded-md border border-slate-300 p-3.5 text-xs space-y-1">
++              <h4 className="mb-1 font-bold text-slate-700">Bank Details</h4>
++              <p><span className="inline-block w-28 font-semibold text-slate-600">Bank Name</span>: {bankDetails.bankName}</p>
++              <p><span className="inline-block w-28 font-semibold text-slate-600">Account Name</span>: {bankDetails.accountHolderName}</p>
++              <p><span className="inline-block w-28 font-semibold text-slate-600">Account No.</span>: {bankDetails.accountNumber}</p>
++              <p><span className="inline-block w-28 font-semibold text-slate-600">IFSC Code</span>: {bankDetails.ifscCode}</p>
++              <p><span className="inline-block w-28 font-semibold text-slate-600">Branch</span>: {bankDetails.branch}</p>
++            </div>
+ 
+-              {/* Paid & Pending Breakdown */}
+-              <div className="border-t border-slate-200 pt-2.5 space-y-1.5">
+-                <div className="flex justify-between items-center text-emerald-800 font-semibold">
+-                  <span>Amount Paid:</span>
+-                  <span className="font-mono">{formattedPaid}</span>
+-                </div>
+-                <div className={`flex justify-between items-center font-bold p-2 rounded ${pendingAmount > 0 ? 'bg-amber-100/70 text-amber-900 border border-amber-200' : 'bg-emerald-100/50 text-emerald-900'}`}>
+-                  <span>Pending Amount:</span>
+-                  <span className="font-mono text-sm">{formattedPending}</span>
+-                </div>
+-              </div>
++            <div className="rounded-md border border-slate-300 p-3.5 text-xs">
++              <h4 className="mb-1.5 font-bold text-slate-700">Notes</h4>
++              <ul className="list-disc space-y-1 pl-4 text-slate-600">
++                {NOTES_LIST.map((n) => (
++                  <li key={n}>{n}</li>
++                ))}
++                <li>
++                  For any queries, contact us at {companyInfo.contactPhone} or {companyInfo.contactEmail}.
++                </li>
++              </ul>
++              {invoice.notes && <p className="mt-2 italic text-slate-500 border-t border-slate-200 pt-1.5">{invoice.notes}</p>}
+             </div>
+           </div>
+ 
+-          {/* ================= FOOTER SECTION ================= */}
+-          <div className="mt-10 border-t border-slate-200 pt-6">
+-            <div className="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
+-              {/* Centered Message */}
+-              <div className="text-center sm:text-left space-y-1">
+-                <p className="text-xs font-bold text-slate-800">
+-                  Thank you for your business!
+-                </p>
+-                <p className="text-[11px] text-slate-500 max-w-sm">
+-                  Please include Invoice #{invoice.invoiceNo} on your payment reference. For queries, email {companyInfo.contactEmail}.
+-                </p>
+-              </div>
++          {/* ================= TERMS & CONDITIONS ================= */}
++          <div className="my-5 text-xs">
++            <h4 className="mb-1.5 font-bold text-slate-700">Terms &amp; Conditions</h4>
++            <ol className="list-decimal space-y-1 pl-4 text-slate-600">
++              {TERMS_LIST.map((t) => (
++                <li key={t}>{t}</li>
++              ))}
++            </ol>
++          </div>
+ 
+-              {/* Bottom Right: Circular Company Stamp & Authorised Signatory */}
+-              <div className="flex flex-col items-center justify-end text-center ml-auto sm:ml-0">
+-                {/* Stamp */}
+-                <div className="relative flex h-20 w-20 items-center justify-center rounded-full border-2 border-dashed border-blue-600 bg-blue-50/40 p-2 shadow-inner">
+-                  <div className="absolute inset-1 rounded-full border border-blue-400/50" />
+-                  <div className="z-10 text-center text-blue-900">
+-                    <div className="text-[8px] font-black uppercase tracking-tighter">SHINE CRAFT</div>
+-                    <div className="text-[6.5px] font-bold tracking-wider text-blue-700 uppercase">TECHNOLOGIES</div>
+-                    <div className="text-[6px] font-medium text-emerald-700">VERIFIED</div>
+-                  </div>
+-                </div>
++          {/* ================= STAMP & SIGNATORY ================= */}
++          <div className="mt-8 flex flex-wrap items-end justify-between gap-6">
++            <div className="flex h-24 w-24 items-center justify-center rounded-full border-2 border-dashed border-blue-600 bg-blue-50/40 p-2 text-center shadow-inner">
++              <div className="text-blue-900">
++                <div className="text-[8px] font-black uppercase tracking-tighter">SHINE CRAFT</div>
++                <div className="text-[6.5px] font-bold tracking-wider text-blue-700 uppercase">TECHNOLOGIES</div>
++                <div className="text-[6px] font-medium text-slate-500 uppercase">Puducherry</div>
++              </div>
++            </div>
+ 
+-                <div className="mt-2 w-36 border-t border-slate-300 pt-1 text-center text-[11px] font-semibold text-slate-800">
+-                  Authorised Signatory
+-                </div>
++            <div className="text-center">
++              <p className="text-xs font-semibold text-slate-700">For {companyInfo.companyName}</p>
++              <div className="mt-8 w-40 border-t border-slate-300 pt-1 text-[11px] font-semibold text-slate-800">
++                Authorised Signatory
+               </div>
+             </div>
+           </div>
++
++          {/* ================= FOOTER ================= */}
++          <div className="mt-8 flex items-center gap-4 text-center text-xs font-semibold text-slate-600">
++            <span className="h-px flex-1 bg-slate-300" />
++            <span>Thank you for your business!</span>
++            <span className="h-px flex-1 bg-slate-300" />
++          </div>
+         </div>
+       </div>
+ 
+diff --git a/src/features/invoices/components/InvoiceFormModal.tsx b/src/features/invoices/components/InvoiceFormModal.tsx
+index 4939cb8..ceb0bcf 100644
+--- a/src/features/invoices/components/InvoiceFormModal.tsx
++++ b/src/features/invoices/components/InvoiceFormModal.tsx
+@@ -40,8 +40,12 @@ const invoiceSchema = z
+   .object({
+     projectId: z.string().min(1, 'Select a project'),
+     serviceCategory: z.string().min(2, 'Service category is required'),
++    serviceType: z.string().min(1, 'Service type is required'),
+     billingType: z.enum(['One-Time', 'Milestone-Based', 'Recurring', 'Time & Material']),
+     billingStage: z.string().min(1, 'Milestone / Stage is required'),
++    billingPeriodStart: z.string().min(1, 'Billing period start is required'),
++    billingPeriodEnd: z.string().min(1, 'Billing period end is required'),
++    placeOfSupply: z.string().min(1, 'Place of Supply is required'),
+     quotationNo: z.string().min(1, 'Quotation No. is required'),
+     invoiceDate: z.string().min(1, 'Invoice date is required'),
+     dueDate: z.string().min(1, 'Due date is required'),
+@@ -56,6 +60,10 @@ const invoiceSchema = z
+   .refine((data) => new Date(data.dueDate) >= new Date(data.invoiceDate), {
+     message: 'Due date must be on or after the invoice date',
+     path: ['dueDate'],
++  })
++  .refine((data) => new Date(data.billingPeriodEnd) >= new Date(data.billingPeriodStart), {
++    message: 'Billing period end must be on or after the start',
++    path: ['billingPeriodEnd'],
+   });
+ 
+ export interface InvoiceFormModalProps {
+@@ -88,8 +96,12 @@ function emptyItem(): InvoiceFormValues['items'][number] {
+ const EMPTY_VALUES: InvoiceFormValues = {
+   projectId: '',
+   serviceCategory: '',
++  serviceType: '',
+   billingType: 'One-Time',
+   billingStage: '',
++  billingPeriodStart: '',
++  billingPeriodEnd: '',
++  placeOfSupply: '',
+   quotationNo: '',
+   invoiceDate: '',
+   dueDate: '',
+@@ -148,8 +160,12 @@ export function InvoiceFormModal({ open, onOpenChange, invoice, onSubmit, isSubm
+           ? {
+               projectId: invoice.projectId,
+               serviceCategory: invoice.serviceCategory,
++              serviceType: invoice.serviceType,
+               billingType: invoice.billingType,
+               billingStage: invoice.billingStage,
++              billingPeriodStart: invoice.billingPeriodStart,
++              billingPeriodEnd: invoice.billingPeriodEnd,
++              placeOfSupply: invoice.placeOfSupply,
+               quotationNo: invoice.quotationNo,
+               invoiceDate: invoice.invoiceDate,
+               dueDate: invoice.dueDate,
+@@ -230,19 +246,51 @@ export function InvoiceFormModal({ open, onOpenChange, invoice, onSubmit, isSubm
+             />
+           </div>
+ 
+-          <Input
+-            label="Service Category"
+-            required
+-            placeholder="e.g. ERP Implementation"
+-            error={errors.serviceCategory?.message}
+-            {...register('serviceCategory')}
+-          />
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <Input
++              label="Service Category"
++              required
++              placeholder="e.g. ERP Implementation"
++              error={errors.serviceCategory?.message}
++              {...register('serviceCategory')}
++            />
++            <Input
++              label="Service Type"
++              required
++              placeholder="e.g. Hosting, AMC, Consulting"
++              error={errors.serviceType?.message}
++              {...register('serviceType')}
++            />
++          </div>
+ 
+           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+             <DatePicker label="Invoice Date" required error={errors.invoiceDate?.message} {...register('invoiceDate')} />
+             <DatePicker label="Due Date" required error={errors.dueDate?.message} {...register('dueDate')} />
+           </div>
+ 
++          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
++            <DatePicker
++              label="Billing Period — From"
++              required
++              error={errors.billingPeriodStart?.message}
++              {...register('billingPeriodStart')}
++            />
++            <DatePicker
++              label="Billing Period — To"
++              required
++              error={errors.billingPeriodEnd?.message}
++              {...register('billingPeriodEnd')}
++            />
++          </div>
++
++          <Input
++            label="Place of Supply"
++            required
++            placeholder="e.g. Puducherry (34)"
++            error={errors.placeOfSupply?.message}
++            {...register('placeOfSupply')}
++          />
++
+           {/* Line Items table */}
+           <div className="space-y-2">
+             <div className="flex items-center justify-between">
+diff --git a/src/pages/billing/payments-received/PaymentsReceivedListPage.tsx b/src/pages/billing/payments-received/PaymentsReceivedListPage.tsx
+index 82cc356..7d6e619 100644
+--- a/src/pages/billing/payments-received/PaymentsReceivedListPage.tsx
++++ b/src/pages/billing/payments-received/PaymentsReceivedListPage.tsx
+@@ -121,8 +121,12 @@ export default function PaymentsReceivedListPage() {
+       projectName: payment.projectName,
+       clientName: payment.projectName.split('—')[0]?.trim() || 'Valued Client',
+       serviceCategory: 'Software Development',
++      serviceType: 'Software Development',
+       billingType: 'Milestone-Based',
+       billingStage: 'Development',
++      billingPeriodStart: payment.paymentDate,
++      billingPeriodEnd: payment.paymentDate,
++      placeOfSupply: 'Puducherry (34)',
+       quotationNo: 'QT-2025-011',
+       invoiceDate: payment.paymentDate,
+       dueDate: payment.paymentDate,
+diff --git a/src/services/invoiceService.ts b/src/services/invoiceService.ts
+index ef60701..9952b4f 100644
+--- a/src/services/invoiceService.ts
++++ b/src/services/invoiceService.ts
+@@ -23,6 +23,10 @@ let SEED_INVOICES: Invoice[] = [
+     serviceCategory: 'ERP Implementation',
+     billingType: 'Milestone-Based',
+     billingStage: 'Advance',
++    serviceType: 'ERP Implementation',
++    billingPeriodStart: '2025-02-05',
++    billingPeriodEnd: '2025-05-04',
++    placeOfSupply: 'Tamil Nadu (33)',
+     quotationNo: 'QT-2025-011',
+     invoiceDate: '2025-02-05',
+     dueDate: '2025-02-15',
+@@ -45,6 +49,10 @@ let SEED_INVOICES: Invoice[] = [
+     serviceCategory: 'ERP Implementation',
+     billingType: 'Milestone-Based',
+     billingStage: 'Development',
++    serviceType: 'ERP Implementation',
++    billingPeriodStart: '2025-05-16',
++    billingPeriodEnd: '2025-08-15',
++    placeOfSupply: 'Tamil Nadu (33)',
+     quotationNo: 'QT-2025-011',
+     invoiceDate: '2025-05-16',
+     dueDate: '2025-05-26',
+@@ -67,6 +75,10 @@ let SEED_INVOICES: Invoice[] = [
+     serviceCategory: 'Web Development',
+     billingType: 'Milestone-Based',
+     billingStage: 'UI Design Sign-off',
++    serviceType: 'UI/UX Design',
++    billingPeriodStart: '2025-04-21',
++    billingPeriodEnd: '2025-05-21',
++    placeOfSupply: 'Karnataka (29)',
+     quotationNo: 'QT-2025-018',
+     invoiceDate: '2025-04-21',
+     dueDate: '2025-05-01',
+@@ -89,6 +101,10 @@ let SEED_INVOICES: Invoice[] = [
+     serviceCategory: 'Web Development',
+     billingType: 'Milestone-Based',
+     billingStage: 'Checkout Module',
++    serviceType: 'Web Development',
++    billingPeriodStart: '2025-03-26',
++    billingPeriodEnd: '2025-04-25',
++    placeOfSupply: 'Maharashtra (27)',
+     quotationNo: 'QT-2025-024',
+     invoiceDate: '2025-03-26',
+     dueDate: '2025-04-05',
+@@ -111,6 +127,10 @@ let SEED_INVOICES: Invoice[] = [
+     serviceCategory: 'Consulting',
+     billingType: 'Time & Material',
+     billingStage: 'Support Retainer — June',
++    serviceType: 'Fleet Consulting',
++    billingPeriodStart: '2025-06-01',
++    billingPeriodEnd: '2025-06-30',
++    placeOfSupply: 'Puducherry (34)',
+     quotationNo: 'QT-2025-009',
+     invoiceDate: '2025-06-01',
+     dueDate: '2025-06-11',
+@@ -133,6 +153,10 @@ let SEED_INVOICES: Invoice[] = [
+     serviceCategory: 'Software Development',
+     billingType: 'One-Time',
+     billingStage: 'Requirement Sign-off',
++    serviceType: 'Software Development',
++    billingPeriodStart: '2025-07-01',
++    billingPeriodEnd: '2025-07-31',
++    placeOfSupply: 'Puducherry (34)',
+     quotationNo: 'QT-2025-031',
+     invoiceDate: '2025-07-01',
+     dueDate: '2025-07-11',
+diff --git a/src/types/invoice.types.ts b/src/types/invoice.types.ts
+index da38ac1..e3664c3 100644
+--- a/src/types/invoice.types.ts
++++ b/src/types/invoice.types.ts
+@@ -26,8 +26,12 @@ export interface Invoice {
+   projectName: string; // denormalized for table display
+   clientName: string; // denormalized for table display
+   serviceCategory: string;
++  serviceType: string; // shown on the Tax Invoice "Service Details" box, e.g. "Hosting", "AMC"
+   billingType: BillingType;
+   billingStage: string; // shown as "Milestone / Stage" on the Create Invoice popup
++  billingPeriodStart: string; // ISO date — Tax Invoice "Billing Period" range start
++  billingPeriodEnd: string; // ISO date — Tax Invoice "Billing Period" range end
++  placeOfSupply: string; // e.g. "Puducherry (34)" — required on a GST Tax Invoice
+   quotationNo: string;
+   invoiceDate: string; // ISO date
+   dueDate: string; // ISO date
+@@ -44,8 +48,12 @@ export interface Invoice {
+ export interface InvoiceFormValues {
+   projectId: string;
+   serviceCategory: string;
++  serviceType: string;
+   billingType: BillingType;
+   billingStage: string;
++  billingPeriodStart: string;
++  billingPeriodEnd: string;
++  placeOfSupply: string;
+   quotationNo: string;
+   invoiceDate: string;
+   dueDate: string;
+-- 
+2.43.0
+
